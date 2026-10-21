@@ -1,0 +1,34 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sts2DllRecorder", "Sts2DllRecorder/Sts2DllRecorder.csproj", "{501BB600-2BC4-5870-BA86-638459CD7578}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Sts2PolicyHost", "Sts2PolicyHost/Sts2PolicyHost.csproj", "{377ACBE2-9233-5A51-B314-C59C8B2BC4B0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PublicObservation.Tests", "tests/PublicObservation.Tests.csproj", "{C19B5D51-8C83-583D-8F79-D2F45083DA79}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FixtureHost", "../../tools/validation/FixtureHost/FixtureHost.csproj", "{2AF0B4C1-07C0-5414-9207-DB12E01D1044}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{501BB600-2BC4-5870-BA86-638459CD7578}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{501BB600-2BC4-5870-BA86-638459CD7578}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{501BB600-2BC4-5870-BA86-638459CD7578}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{501BB600-2BC4-5870-BA86-638459CD7578}.Release|Any CPU.Build.0 = Release|Any CPU
+		{377ACBE2-9233-5A51-B314-C59C8B2BC4B0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{377ACBE2-9233-5A51-B314-C59C8B2BC4B0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{377ACBE2-9233-5A51-B314-C59C8B2BC4B0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{377ACBE2-9233-5A51-B314-C59C8B2BC4B0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C19B5D51-8C83-583D-8F79-D2F45083DA79}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C19B5D51-8C83-583D-8F79-D2F45083DA79}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C19B5D51-8C83-583D-8F79-D2F45083DA79}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C19B5D51-8C83-583D-8F79-D2F45083DA79}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2AF0B4C1-07C0-5414-9207-DB12E01D1044}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2AF0B4C1-07C0-5414-9207-DB12E01D1044}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2AF0B4C1-07C0-5414-9207-DB12E01D1044}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2AF0B4C1-07C0-5414-9207-DB12E01D1044}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

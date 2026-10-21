@@ -2,6 +2,7 @@
 # Learn the Spire
 
 このforkのv0.111での利用手順は[docs/v111.md](docs/v111.md)を参照してください。
+独自の観測・操作ログは[任意のアドオン](addons/public-observation/README.md)です。
 
 This is a project I've been working on for fun, to test out machine learning ideas on Slay the Spire 2.
 

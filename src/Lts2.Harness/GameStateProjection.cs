@@ -621,7 +621,7 @@ internal static class GameStateProjection
     };
 
     private static PowerView ProjectPower(PowerModel power) =>
-        new() { PowerId = power.Id.Entry, Amount = power.Amount };
+        new() { PowerId = power.Id.Entry, Amount = power.Amount, DisplayAmount = power.DisplayAmount, IsVisible = power.IsVisible };
 
     private static CombatView ProjectCombat(CombatState combat) =>
         new()

@@ -562,6 +562,8 @@ public sealed record PowerView
 {
     public required string PowerId { get; init; }
     public required int Amount { get; init; }
+    public int DisplayAmount { get; init; }
+    public bool IsVisible { get; init; }
 }
 
 /// <summary>The current battle.</summary>

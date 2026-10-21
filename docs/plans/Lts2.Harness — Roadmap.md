@@ -15,6 +15,7 @@ demand; add seeded tests; keep `RunState.ToSerializable()` round-tripping.
 
 初期化・Godot shimの追加API、イベント内戦闘の親効果再開、報酬内のカード選択、
 報酬後の保存復元、ターン終了の待機に対応。利用条件と未確認範囲は[対応手順](../v111.md)を参照。
+実ゲームとの比較用の観測・ログは別ソリューションの任意アドオンとして扱う。
 
 ## M0 — Done (vertical slice)
 Headless boot, map gen, move into a room, full combat (faithful play, enemy turns,

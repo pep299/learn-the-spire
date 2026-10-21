@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><ImplicitUsings>enable</ImplicitUsings><ReferencesGameLib>true</ReferencesGameLib></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../../../src/Lts2.Agent/Lts2.Agent.csproj" /></ItemGroup>
+</Project>

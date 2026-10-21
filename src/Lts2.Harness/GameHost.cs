@@ -210,7 +210,7 @@ public sealed class GameHost
     /// <c>ModelDb.AllCharacters</c> (call <see cref="GameRuntime.EnsureInitialized"/> first so the
     /// model database is populated).
     /// </summary>
-    public static GameHost StartNewRun(string seed, IReadOnlyList<CharacterModel> characters, int ascension = 0)
+    public static GameHost StartNewRun(string seed, IReadOnlyList<CharacterModel> characters, int ascension = 0, bool seededActs = false)
     {
         if (characters is null || characters.Count < 1)
         {
@@ -237,7 +237,12 @@ public sealed class GameHost
             players.Add(Player.CreateForNewRun(characters[i], unlock, (ulong)(i + 1)));
         }
 
-        List<ActModel> acts = ActModel.GetDefaultList().Select(a => a.ToMutable()).ToList();
+        IEnumerable<ActModel> selectedActs = seededActs
+            ? ActModel.GetRandomList(
+                new MegaCrit.Sts2.Core.Random.Rng(StringHelper.GetDeterministicHashCode(seed), "act_selection"),
+                unlock, characters.Count > 1)
+            : ActModel.GetDefaultList();
+        List<ActModel> acts = selectedActs.Select(a => a.ToMutable()).ToList();
         RunState runState = RunState.CreateForNewRun(
             players,
             acts,

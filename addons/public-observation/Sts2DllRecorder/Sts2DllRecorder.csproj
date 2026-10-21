@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><ReferencesGameLib>true</ReferencesGameLib></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/Lts2.Harness/Lts2.Harness.csproj" />
+    <Compile Include="../shared/PublicData.cs" Link="PublicData.cs" />
+    <Compile Include="../shared/CardProjection.cs" Link="CardProjection.cs" />
+  </ItemGroup>
+</Project>
