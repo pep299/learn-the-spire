@@ -33,7 +33,8 @@ internal static class AutoPlayer
         Func<GameState, bool> stop,
         MapPointType? preferMapPointType = null,
         int maxSteps = 5000,
-        ITestOutputHelper? log = null)
+        ITestOutputHelper? log = null,
+        Action<GameHost>? beforeStep = null)
     {
         GamePhase lastPhase = (GamePhase)(-1);
         for (int step = 0; step < maxSteps; step++)
@@ -43,6 +44,8 @@ internal static class AutoPlayer
             {
                 return s;
             }
+            beforeStep?.Invoke(host);
+            s = host.GetState();
             if (log is not null && s.Phase != lastPhase)
             {
                 lastPhase = s.Phase;
@@ -61,8 +64,13 @@ internal static class AutoPlayer
                 case GamePhase.Reward:
                     StepReward(host);
                     break;
+                case GamePhase.BundleChoice:
+                    host.Apply(host.ListOptions().First(o => o.Kind == OptionKind.ChooseBundle));
+                    break;
                 case GamePhase.Event:
-                    host.Apply(host.ListOptions().First(o => o.Kind == OptionKind.ChooseEventOption));
+                    var eventOption = host.ListOptions().First(o => o.Kind == OptionKind.ChooseEventOption);
+                    log?.WriteLine($"Event {s.Event?.EventId}: {eventOption.Description}");
+                    host.Apply(eventOption);
                     break;
                 case GamePhase.Treasure:
                     // Default: take the first relic on offer.

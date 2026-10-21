@@ -152,7 +152,7 @@ public sealed class ExoticRewardSetTests
     [Theory]
     [InlineData("ORRERY", RewardType.Card, 5)]
     [InlineData("GLASS_EYE", RewardType.Card, 5)]
-    [InlineData("TOY_BOX", RewardType.Relic, 4)]
+    [InlineData("TOY_BOX", RewardType.Relic, 5)]
     public async Task CardOrRelicSet_Surfaces_AndProceeds(string relicId, RewardType type, int count)
     {
         await Task.Run(() =>

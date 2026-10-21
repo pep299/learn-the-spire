@@ -53,7 +53,7 @@ public sealed class EventTests
     [Fact]
     public void ChoosingABenignBlessing_GrantsTheRelic_AndProceedsToTheMap()
     {
-        GameHost host = GameHost.StartNewRun(seed: "TESTSEED");
+        GameHost host = GameHost.StartNewRun(seed: "BENIGN");
         host.EnterFirstRoom();
 
         GameState atEvent = host.GetState();
@@ -81,7 +81,7 @@ public sealed class EventTests
     [Fact]
     public void KaleidoscopeBlessing_OffersBonusCardRewards_AsExplicitTakeOrSkip()
     {
-        GameHost host = GameHost.StartNewRun(seed: "TESTSEED");
+        GameHost host = GameHost.StartNewRun(seed: "NEOW111_12");
         host.EnterFirstRoom();
 
         // Kaleidoscope's relic grants two bonus card rewards on pickup; they must be an explicit
@@ -125,13 +125,14 @@ public sealed class EventTests
         Assert.Contains(onMap.Players[0].Deck, c => c.CardId == takenCard);
     }
 
-    /// <summary>The first Neow option whose relic has no upon-pickup (bonus reward) effect.</summary>
+    /// <summary>AfterObtainedをオーバーライドしない祝福で、追加選択のない局面を作る。</summary>
     private static GameOption FirstBenignBlessing(GameHost host)
     {
         EventModel ev = RunManager.Instance.EventSynchronizer.GetLocalEvent();
         var benign = host.ListOptions()
             .First(o => o.Kind == OptionKind.ChooseEventOption
-                        && ev.CurrentOptions[o.EventOptionIndex!.Value].Relic is { HasUponPickupEffect: false });
+                        && ev.CurrentOptions[o.EventOptionIndex!.Value].Relic is {} relic
+                        && relic.GetType().GetMethod(nameof(RelicModel.AfterObtained))?.DeclaringType == typeof(RelicModel));
         return benign;
     }
 }

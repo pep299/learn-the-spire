@@ -93,6 +93,7 @@ public sealed class CharacterMechanicsTests
     public void EnemyIntent_ExposesActualAndBaseDamage()
     {
         GameHost host = StartCombatAs("Ironclad");
+        TestNav.WaitForAttackIntent(host);
         CombatView combat = host.GetState().Combat!;
         EnemyView enemy = combat.Enemies.First(e => e.Intents.Any(i => i.Damage is not null));
         IntentView attack = enemy.Intents.First(i => i.Damage is not null);

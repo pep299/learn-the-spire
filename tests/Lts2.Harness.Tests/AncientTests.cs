@@ -37,7 +37,8 @@ public sealed class AncientTests
             stop: s => s.ActIndex == 1 && s.Phase == GamePhase.Map,
             preferMapPointType: MapPointType.Boss,
             maxSteps: 6000,
-            log: _out);
+            log: _out,
+            beforeStep: TestNav.PreserveTraversalHp);
 
         Assert.Equal(1, atAct2.ActIndex);
         Assert.Equal(GamePhase.Map, atAct2.Phase);

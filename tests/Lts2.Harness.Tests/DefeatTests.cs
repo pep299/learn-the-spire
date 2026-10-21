@@ -36,7 +36,7 @@ public sealed class DefeatTests
     private static void KillWithUnblockable(Creature target)
     {
         var ctx = new ThrowingPlayerChoiceContext();
-        CreatureCmd.Damage(ctx, target, 99999m, ValueProp.Unblockable | ValueProp.Unpowered, dealer: null, cardSource: null)
+        CreatureCmd.Damage(ctx, target, 99999m, ValueProp.Unblockable | ValueProp.Unpowered, dealer: null, cardSource: null, cardPlay: null)
             .GetAwaiter().GetResult();
         RunManager.Instance.ActionExecutor.FinishedExecutingActions().GetAwaiter().GetResult();
         // A player death marks the combat as a pending loss; the combat flow turns that into an actual
@@ -74,7 +74,7 @@ public sealed class DefeatTests
             TestNav.SetHp(host, maxHp: player.MaxHp, currentHp: 12);
 
             var ctx = new ThrowingPlayerChoiceContext();
-            CreatureCmd.Damage(ctx, player, 12m, ValueProp.Unblockable | ValueProp.Unpowered, dealer: null, cardSource: null)
+            CreatureCmd.Damage(ctx, player, 12m, ValueProp.Unblockable | ValueProp.Unpowered, dealer: null, cardSource: null, cardPlay: null)
                 .GetAwaiter().GetResult();
             RunManager.Instance.ActionExecutor.FinishedExecutingActions().GetAwaiter().GetResult();
 

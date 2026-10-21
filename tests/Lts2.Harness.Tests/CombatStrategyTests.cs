@@ -7,11 +7,8 @@ using Xunit.Abstractions;
 namespace Lts2.Harness.Tests;
 
 /// <summary>
-/// Drives a real first combat entirely by <see cref="RulesDecisionEngine"/> (the engine behind the TUI's
-/// Tab auto-play), via its <c>Recommend</c> top pick. Verifies the policy only ever returns a legal,
-/// listed move, that its choices honour the documented rules (block only when it would take damage and
-/// the block is ≥80% used; attacks aim at the lowest-health enemy; it only ends the turn when out of
-/// energy), and that it plays the fight to a finish.
+/// <see cref="RulesDecisionEngine"/>で最初の戦闘を進める。合法手だけを返すこと、
+/// 防御の80%利用時の優先順位と攻撃対象の規則、戦闘の完了を検証する。
 /// </summary>
 public sealed class CombatStrategyTests
 {
@@ -19,6 +16,48 @@ public sealed class CombatStrategyTests
     private readonly RulesDecisionEngine _engine = new();
 
     public CombatStrategyTests(ITestOutputHelper output) => _out = output;
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(3, false)]
+    [InlineData(4, true)]
+    [InlineData(5, true)]
+    public void Defend_OutranksAttackWhenAtLeastEightyPercentIsUseful(int incoming, bool shouldDefend)
+    {
+        GameHost host = TestNav.MoveIntoFirstCombat();
+        TestNav.WaitForAttackIntent(host);
+        GameState state = host.GetState();
+        GameOption defend = host.ListOptions().First(o => o.Card?.CardId == "DEFEND_IRONCLAD");
+        GameOption end = host.ListOptions().Single(o => o.Kind == OptionKind.EndTurn);
+        GameOption attack = host.ListOptions().First(o => o.Card?.Type == MegaCrit.Sts2.Core.Entities.Cards.CardType.Attack);
+        Assert.Equal(5, defend.Card!.Block);
+        Assert.Equal(0, state.Players[0].Block);
+        EnemyView enemy = state.Combat!.Enemies.First(e => e.Intents.Any(i => i.Damage is not null));
+        IntentView intent = enemy.Intents.First(i => i.Damage is not null) with { Damage = incoming, Hits = 1 };
+        state = state with { Combat = state.Combat with { Enemies = new[] { enemy with { Intents = new[] { intent } } } } };
+        Assert.Same(shouldDefend ? defend : attack, _engine.Recommend(state, new[] { defend, attack, end }));
+    }
+
+    [Fact]
+    public void BlockAndDrawSkill_RemainsEligibleWithoutIncomingDamage()
+    {
+        GameHost host = TestNav.MoveIntoFirstCombat();
+        var player = host.Run.Players[0];
+        player.PlayerCombatState!.Hand.AddInternal(
+            host.Combat!.CreateCard<MegaCrit.Sts2.Core.Models.Cards.ShrugItOff>(player));
+        GameOption shrug = host.ListOptions().Single(o => o.Card?.CardId == "SHRUG_IT_OFF");
+        GameOption end = host.ListOptions().Single(o => o.Kind == OptionKind.EndTurn);
+        GameState state = host.GetState();
+        state = state with
+        {
+            Combat = state.Combat! with
+            {
+                Enemies = state.Combat.Enemies.Select(e => e with { Intents = System.Array.Empty<IntentView>() }).ToArray(),
+            },
+        };
+
+        Assert.Same(shrug, _engine.Recommend(state, new[] { shrug, end }));
+    }
 
     [Fact]
     public void DefaultStrategy_PlaysOutCombat_LegallyAndByTheRules()
@@ -76,15 +115,8 @@ public sealed class CombatStrategyTests
     private static void AssertObeysRules(GameState state, IReadOnlyList<GameOption> options, GameOption pick)
     {
         CombatView combat = state.Combat!;
-        PlayerState me = state.Players[0];
-        int unblocked = combat.Enemies.Sum(e => e.Intents.Where(i => i.Damage is not null)
-            .Sum(i => i.Damage!.Value * (i.Hits ?? 1))) - me.Block;
-
         if (pick.Kind == OptionKind.EndTurn)
         {
-            // Rule 5: the turn is only ended when nothing is worth playing — no attack/power/skill
-            // remains (block cards are skills, so this also covers any defensive play). It may end with
-            // energy to spare when the only cards left are unplayable junk (statuses/curses).
             Assert.DoesNotContain(options, o => o.Kind == OptionKind.PlayCard
                 && o.Card!.Type is MegaCrit.Sts2.Core.Entities.Cards.CardType.Attack
                     or MegaCrit.Sts2.Core.Entities.Cards.CardType.Power
@@ -94,15 +126,7 @@ public sealed class CombatStrategyTests
 
         Assert.Equal(OptionKind.PlayCard, pick.Kind);
         CardView card = pick.Card!;
-        int block = card.Block ?? 0;
-
-        if (block > 0 && (card.Damage ?? 0) == 0)
-        {
-            // A pure block card is only played to defend: we must be taking damage and getting ≥80% value.
-            Assert.True(unblocked > 0, "Played a block card without any incoming unblocked damage.");
-            Assert.True(unblocked * 5 >= block * 4, "Played a block card that would be mostly wasted (<80% used).");
-        }
-        else if (pick.TargetCombatId is { } targetId)
+        if (card.Type == MegaCrit.Sts2.Core.Entities.Cards.CardType.Attack && pick.TargetCombatId is { } targetId)
         {
             // A targeted attack must aim at a lowest-health hittable enemy (ties allowed), unless it is a
             // lethal hit securing a kill on some other target.

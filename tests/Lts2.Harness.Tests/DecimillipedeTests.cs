@@ -46,7 +46,7 @@ public sealed class DecimillipedeTests
         var ctx = new ThrowingPlayerChoiceContext();
         foreach (Creature seg in segments)
         {
-            CreatureCmd.Damage(ctx, seg, 9999m, ValueProp.Unblockable | ValueProp.Unpowered, dealer: null, cardSource: null)
+            CreatureCmd.Damage(ctx, seg, 9999m, ValueProp.Unblockable | ValueProp.Unpowered, dealer: null, cardSource: null, cardPlay: null)
                 .GetAwaiter().GetResult();
         }
         RunManager.Instance.ActionExecutor.FinishedExecutingActions().GetAwaiter().GetResult();

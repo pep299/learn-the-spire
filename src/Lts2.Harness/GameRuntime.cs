@@ -67,6 +67,7 @@ public static class GameRuntime
             // Harmony patches above make lookups return their keys.
             EnsureMinimalLocalizationData();
             LocManager.Initialize();
+            AssemblyInfo.Init();
             ModelDb.Init();
             ModelIdSerializationCache.Init();
             ModelDb.InitIds();

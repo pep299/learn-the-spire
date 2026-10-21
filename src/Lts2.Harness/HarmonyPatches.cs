@@ -52,6 +52,10 @@ internal static class HarmonyPatches
             var harmony = new Harmony("sts2.harness.localization");
 
             harmony.Patch(
+                AccessTools.Method(typeof(MegaCrit.Sts2.Core.Multiplayer.Game.EventSynchronizer), "ResumeEvents"),
+                transpiler: new HarmonyMethod(typeof(HarmonyPatches), nameof(TrackEventResumeTranspiler)));
+
+            harmony.Patch(
                 AccessTools.Method(typeof(LocManager), nameof(LocManager.GetTable)),
                 finalizer: new HarmonyMethod(typeof(HarmonyPatches), nameof(GetTableFinalizer)));
 
@@ -245,6 +249,32 @@ internal static class HarmonyPatches
             "SafetyInNumbers", "DontNeedHelp");
         StripCosmeticUi(harmony, typeof(MegaCrit.Sts2.Core.Models.Events.DenseVegetation),
             "TrudgeOn", "Rest");
+    }
+
+    private static IEnumerable<CodeInstruction> TrackEventResumeTranspiler(IEnumerable<CodeInstruction> instructions)
+    {
+        var original = AccessTools.Method(typeof(MegaCrit.Sts2.Core.Helpers.TaskHelper), "RunSafely", new[] { typeof(Task) });
+        var replacement = AccessTools.Method(typeof(HarmonyPatches), nameof(TrackEventResumeTask));
+        int replaced = 0;
+        foreach (var instruction in instructions)
+        {
+            if (instruction.Calls(original))
+            {
+                instruction.operand = replacement;
+                replaced++;
+            }
+            yield return instruction;
+        }
+        if (replaced != 1)
+        {
+            throw new InvalidOperationException($"Expected one event-resume task dispatch, found {replaced}.");
+        }
+    }
+
+    private static Task TrackEventResumeTask(Task task)
+    {
+        GameHost.EventResumeTaskHook?.Invoke(task);
+        return MegaCrit.Sts2.Core.Helpers.TaskHelper.RunSafely(task);
     }
 
     // The cosmetic UI calls we strip: NDebugAudioManager's playback methods and NGame's screen-shake.

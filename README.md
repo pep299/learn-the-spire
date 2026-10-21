@@ -1,6 +1,8 @@
 
 # Learn the Spire
 
+このforkのv0.111での利用手順は[docs/v111.md](docs/v111.md)を参照してください。
+
 This is a project I've been working on for fun, to test out machine learning ideas on Slay the Spire 2.
 
 ## What does this do?
@@ -33,7 +35,7 @@ game's own DLLs into a local, gitignored `lib/` folder. From scratch:
 ### 2. Clone
 
 ```powershell
-git clone https://github.com/Alexei-B/learn-the-spire
+git clone https://github.com/pep299/learn-the-spire
 cd learn-the-spire
 ```
 

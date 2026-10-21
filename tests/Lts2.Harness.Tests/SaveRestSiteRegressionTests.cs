@@ -12,8 +12,7 @@ namespace Lts2.Harness.Tests;
 /// Regression for the save/restore crash on non-combat rooms. A snapshot taken on the map after a
 /// rest site (or shop / treasure) used to throw <see cref="ArgumentOutOfRangeException"/> on restore,
 /// because the game's <c>AbstractRoom.FromSerializable</c> only reconstructs combat/event rooms.
-/// <see cref="GameHost.Snapshot"/> now records no pre-finished room for such rooms, so the save loads
-/// and the run stays playable (the last node is re-entered fresh rather than crashing the load).
+/// マップへ戻った保存はハーネスのMapマーカーで復元し、休憩効果を再提示しない。
 /// </summary>
 public sealed class SaveRestSiteRegressionTests
 {
@@ -49,6 +48,9 @@ public sealed class SaveRestSiteRegressionTests
 
         // The load succeeded and the run is live and playable.
         Assert.False(after.IsGameOver);
+        Assert.Equal(GamePhase.Map, after.Phase);
+        Assert.Equal(onMap.Players[0].CurrentHp, after.Players[0].CurrentHp);
+        Assert.DoesNotContain(restored.ListOptions(), o => o.Kind == OptionKind.ChooseRestOption);
         Assert.NotEmpty(restored.ListOptions());
         Assert.Equal(onMap.Seed, after.Seed);
     }

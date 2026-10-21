@@ -21,6 +21,10 @@ Trial event's portrait UI (see Key mechanisms). Ascension is plumbed end-to-end 
 validated (`AscensionTests`; see Ascension below). Remaining breadth (local multiplayer, deck-management
 screens, Daily/Custom modes) is **not built**; see `docs/plans/`.
 
+v0.111ではイベント内戦闘から親イベントへ戻る効果、遺物報酬内のカード選択、
+ターン終了要求の反映待ちを補正しています。保存にはハーネス専用のマップマーカーが含まれ、
+ゲーム本体へのインポートはできません。現在の利用条件は[対応手順](../v111.md)を参照してください。
+
 ## What it is
 
 A C# library that emulates Slay the Spire 2 headlessly by **reusing the real game logic

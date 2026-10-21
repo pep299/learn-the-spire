@@ -21,6 +21,7 @@
     <Reference Include="$(GameLibDir)\MonoMod.Backports.dll" />
     <Reference Include="$(GameLibDir)\MonoMod.ILHelpers.dll" />
     <Reference Include="$(GameLibDir)\Sentry.dll" />
+    <Reference Include="$(GameLibDir)\Sentry.Godot.dll" />
     <Reference Include="$(GameLibDir)\SharpGen.Runtime.dll" />
     <Reference Include="$(GameLibDir)\SharpGen.Runtime.COM.dll" />
     <Reference Include="$(GameLibDir)\SmartFormat.dll" />

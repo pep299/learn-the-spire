@@ -12,7 +12,8 @@ namespace Lts2.Harness.Tests;
 /// play with block-then-attack, enemy turns), post-combat rewards, rest sites, treasure, shops, map
 /// navigation, the act 1→2→3 boss handoffs, and finally the Architect victory event — entirely
 /// through the public option API, until it **wins the run or dies**. The player is buffed to a huge
-/// HP pool so the still-simple greedy combat survives, so on the standard seed it beats all three
+/// HP pool. 経路検証のため、最大HPを置換するイベント後にも補助を戻す。方策性能は検証しない。
+/// On the standard seed it beats all three
 /// act bosses and wins, ending on <see cref="GamePhase.GameOver"/> with <see cref="GameState.IsVictory"/>.
 /// </summary>
 public sealed class WalkthroughTests
@@ -44,7 +45,8 @@ public sealed class WalkthroughTests
             host,
             stop: s => s.IsGameOver,
             preferMapPointType: MegaCrit.Sts2.Core.Map.MapPointType.Boss,
-            log: _out);
+            log: _out,
+            beforeStep: TestNav.PreserveTraversalHp);
 
         _out.WriteLine($"Run ended: phase={end.Phase} act={end.ActIndex} floor={end.Floor} victory={end.IsVictory} score={end.Score} relics=[{string.Join(",", end.Players[0].Relics)}]");
 

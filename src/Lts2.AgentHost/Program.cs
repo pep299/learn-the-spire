@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Runtime.CompilerServices;
 using System.Text;
 using Lts2.Agent;
 using Lts2.Agent.Wire;
@@ -20,14 +22,11 @@ internal static class Program
         Console.OutputEncoding = utf8NoBom;
         Console.InputEncoding = utf8NoBom;
 
-        // The game logs verbosely via Godot.GD.*; send it to stderr so stdout stays clean JSON lines.
-        Godot.GD.Out = Console.Error;
-        Godot.GD.Err = Console.Error;
-
+        TextWriter protocolOutput = Console.Out;
+        Console.SetOut(Console.Error);
         try
         {
-            var server = new TrainingEnvironmentServer();
-            server.Serve(new StreamLineChannel(Console.In, Console.Out));
+            Serve(protocolOutput);
             return 0;
         }
         catch (Exception ex)
@@ -35,5 +34,18 @@ internal static class Program
             Console.Error.WriteLine($"[agent-host] fatal: {ex}");
             return 1;
         }
+        finally
+        {
+            Console.SetOut(protocolOutput);
+        }
+    }
+
+    // v0.111のSentry初期化はGDを経由せずConsoleへ書く。JIT時の初期化もリダイレクト内に置く。
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void Serve(TextWriter protocolOutput)
+    {
+        Godot.GD.Out = Godot.GD.Err = Console.Error;
+        var server = new TrainingEnvironmentServer();
+        server.Serve(new StreamLineChannel(Console.In, protocolOutput));
     }
 }

@@ -56,6 +56,10 @@ public sealed class GameHost
     // relic's on-obtain AfterObtained) kept in flight when it suspends on a custom reward screen so
     // ProceedFromRewards can resume it. Null otherwise.
     private System.Threading.Tasks.Task? _suspendedRoomTask;
+    private System.Threading.Tasks.Task? _rewardSelectionTask;
+
+    private List<System.Threading.Tasks.Task>? _eventResumeTasks;
+    internal static Action<System.Threading.Tasks.Task>? EventResumeTaskHook;
 
     // A rest-site option resolution (ChooseLocalOption) task, kept in flight when it suspends on a
     // mid-effect card choice (e.g. Smith's upgrade selection) so Apply can resume it. Null otherwise.
@@ -275,18 +279,15 @@ public sealed class GameHost
         // Intercept the "choose a bundle" screen (ScrollBoxes), which is null headless and otherwise
         // auto-takes bundles[0] under TestMode. Process-wide; the latest run owns it.
         BundleChoiceHook = host.OnBundleChoiceOffered;
+        EventResumeTaskHook = task => host._eventResumeTasks?.Add(task);
 
         return host;
     }
 
     // ---------------------------------------------------------------------------------
-    // Snapshot & restore (M7). A run serializes to the game's own SerializableRun save model
-    // (RunManager.ToSave); restoring rebuilds the RunState (RunState.FromSerializable) and re-enters
-    // the run the way the game's load path does (SetUpSavedSingleplayer → Launch → GenerateMap →
-    // LoadIntoLatestMapCoord), minus all UI/asset loading. A snapshot taken on the map passes the
-    // just-finished current room as the save's "pre-finished room" so restore re-enters it as already
-    // completed (rather than re-running the combat) — but ONLY for combat/event rooms (see Snapshot).
-    // Snapshotting mid-combat is not supported yet (combat state lives in CombatManager, not RunState).
+    // 保存復元はSerializableRunとゲームのロード経路を使い、UI・アセット読み込みを省く。
+    // ゲームの戦闘完了マーカーでは報酬が再生成されるため、報酬処理済みのマップ状態には
+    // ハーネス専用のMap部屋マーカーを使う。戦闘中の状態はRunStateだけでは保存できない。
     // ---------------------------------------------------------------------------------
 
     /// <summary>
@@ -294,13 +295,10 @@ public sealed class GameHost
     /// Intended for use out of combat (on the map / between rooms).
     /// </summary>
     /// <remarks>
-    /// The just-finished current room is recorded as the save's pre-finished room so <see cref="Restore"/>
-    /// resumes without re-running it — but only when it is a combat or event room. The game's
-    /// <c>AbstractRoom.FromSerializable</c> (used on restore) only reconstructs Monster/Elite/Boss and
-    /// Event rooms and <c>throw</c>s <see cref="ArgumentOutOfRangeException"/> for anything else, and the
-    /// game itself only ever persists a pre-finished room from those two paths (CombatManager / EventRoom).
-    /// So for a rest site / shop / treasure we record no pre-finished room; restore then re-enters that
-    /// map node fresh (a harmless re-visit) rather than crashing the load.
+    /// マップ上ではハーネス専用のMap部屋マーカーを保存する。ゲームの戦闘完了マーカーは
+    /// 復元時に報酬を再生成するため、報酬処理済みの状態には使わない。このマーカーを含む保存は
+    /// ハーネスで復元すること。ゲーム本体へのインポートには対応しない。
+    /// 店内など、まだマップへ戻っていない局面の完全複製には対応しない。
     /// </remarks>
     public MegaCrit.Sts2.Core.Saves.SerializableRun Snapshot()
     {
@@ -313,7 +311,15 @@ public sealed class GameHost
             Run.CurrentRoom is MegaCrit.Sts2.Core.Rooms.CombatRoom or MegaCrit.Sts2.Core.Rooms.EventRoom
                 ? Run.CurrentRoom
                 : null;
-        return RunManager.Instance.ToSave(preFinished);
+        var save = RunManager.Instance.ToSave(preFinished);
+        if (GetState().Phase == GamePhase.Map)
+        {
+            save.PreFinishedRoom = new MegaCrit.Sts2.Core.Saves.Runs.SerializableRoom
+            {
+                RoomType = MegaCrit.Sts2.Core.Rooms.RoomType.Map,
+            };
+        }
+        return save;
     }
 
     /// <summary>
@@ -334,18 +340,24 @@ public sealed class GameHost
         RunManager.Instance.Launch();
         Pump(RunManager.Instance.GenerateMap());
         MegaCrit.Sts2.Core.Rooms.AbstractRoom? preFinished =
-            MegaCrit.Sts2.Core.Rooms.AbstractRoom.FromSerializable(save.PreFinishedRoom, runState);
-        Pump(RunManager.Instance.LoadIntoLatestMapCoord(preFinished));
-
+            save.PreFinishedRoom?.RoomType == MegaCrit.Sts2.Core.Rooms.RoomType.Map
+                ? new MegaCrit.Sts2.Core.Rooms.MapRoom()
+                : MegaCrit.Sts2.Core.Rooms.AbstractRoom.FromSerializable(save.PreFinishedRoom, runState);
         GameHost host = InstallHarnessAndCreateHost(runState, seed);
-        host.WaitForEventReady();
+        host._suspendedRoomTask = RunManager.Instance.LoadIntoLatestMapCoord(preFinished);
+        host.PumpRoomTaskUntilIdleOrChoice(host._suspendedRoomTask);
+        if (host._suspendedRoomTask.IsCompleted)
+        {
+            host._suspendedRoomTask.GetAwaiter().GetResult();
+            host._suspendedRoomTask = null;
+        }
+        if (!host.EffectSuspended) host.WaitForEventReady();
         return host;
     }
 
     /// <summary>
-    /// Serialize a <see cref="Snapshot"/> to the game's own save JSON (the format the game persists
-    /// runs in). Out of combat only (see <see cref="Snapshot"/>); the seed is not stored in the run
-    /// save, so keep it alongside if you need it to <see cref="RestoreFromJson"/>.
+    /// ゲームのJSONシリアライザーとハーネスのMapマーカーで<see cref="Snapshot"/>を保存する。
+    /// 戦闘中は非対応。<see cref="RestoreFromJson"/>に渡すseedは別途保持すること。
     /// </summary>
     public string ToSaveJson() =>
         MegaCrit.Sts2.Core.Saves.JsonSerializationUtility.ToJson(Snapshot());
@@ -405,6 +417,7 @@ public sealed class GameHost
                     "A rewards set is already pending when a custom reward was offered.");
             }
             PendingRewards = set;
+            if (set.Room is MegaCrit.Sts2.Core.Rooms.CombatRoom room) _rewardedRoom = room;
             _customRewardResolve = resolve;
             _customRewardSignal.TrySetResult();
         }
@@ -813,11 +826,12 @@ public sealed class GameHost
     /// </summary>
     public void EndTurn(Player player)
     {
+        int endedRound = Combat!.RoundNumber;
         MegaCrit.Sts2.Core.Commands.PlayerCmd.EndTurn(player, canBackOut: false);
         DrainActionQueue();
         if (MegaCrit.Sts2.Core.Combat.CombatManager.Instance.AllPlayersReadyToEndTurn())
         {
-            WaitUntilPlayerCanActOrCombatEnds(player);
+            WaitForNextPlayerTurnOrCombatEnd(player, endedRound);
             TryOfferCombatRewards();
         }
     }
@@ -867,9 +881,8 @@ public sealed class GameHost
     // ---------------------------------------------------------------------------------
 
     /// <summary>
-    /// If combat has just been won, generate and offer the room's end-of-combat rewards so
-    /// they surface as <see cref="GamePhase.Reward"/>. Idempotent per combat room; a no-op
-    /// while still in combat, on a loss, or for encounters that grant no rewards.
+    /// 戦闘勝利後の報酬を部屋ごとに一度だけ提示する。通常報酬のないイベント戦闘では、
+    /// 親イベントの再開へ進み、そこで発生する報酬や選択を外部へ返す。
     /// </summary>
     private void TryOfferCombatRewards()
     {
@@ -888,6 +901,7 @@ public sealed class GameHost
         }
         if (room.Encounter is { ShouldGiveRewards: false })
         {
+            TryResumeParentEvent(room);
             return;
         }
 
@@ -907,6 +921,7 @@ public sealed class GameHost
             }
             MegaCrit.Sts2.Core.Rewards.RewardsSet set =
                 Pump(MegaCrit.Sts2.Core.Commands.RewardsCmd.GenerateForRoomEnd(player, room));
+            Pump(MegaCrit.Sts2.Core.Hooks.Hook.BeforeCombatRewardOffered(set, Run, room));
             _ = RunManager.Instance.RewardsSetSynchronizer.BeginRewardsSet(set);
             sets.Add(set);
         }
@@ -915,6 +930,46 @@ public sealed class GameHost
         for (int i = 1; i < sets.Count; i++)
         {
             _queuedRewardSets.Enqueue(sets[i]);
+        }
+    }
+
+    private static readonly System.Reflection.MethodInfo _proceedFromTerminalRewards =
+        typeof(RunManager).GetMethod("ProceedFromTerminalRewardsScreen",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)
+        ?? throw new MissingMethodException(typeof(RunManager).FullName, "ProceedFromTerminalRewardsScreen");
+
+    private bool TryResumeParentEvent(MegaCrit.Sts2.Core.Rooms.CombatRoom room)
+    {
+        if (!room.ShouldResumeParentEventAfterCombat || Run.CurrentRoomCount <= 1)
+        {
+            return false;
+        }
+        _rewardedRoom = room;
+        _suspendedRoomTask = ResumeParentEvent();
+        PumpRoomTaskUntilIdleOrChoice(_suspendedRoomTask);
+        if (_suspendedRoomTask.IsCompleted)
+        {
+            _suspendedRoomTask.GetAwaiter().GetResult();
+            _suspendedRoomTask = null;
+        }
+        return true;
+    }
+
+    private async System.Threading.Tasks.Task ResumeParentEvent()
+    {
+        // ResumeEventsはタスクを保持しない。部屋の遷移だけを待つと、報酬やカード選択が
+        // 生成される前に観測が返るため、再開されたイベントの処理も待つ。
+        var tasks = new List<System.Threading.Tasks.Task>();
+        var previous = _eventResumeTasks;
+        _eventResumeTasks = tasks;
+        try
+        {
+            await (System.Threading.Tasks.Task)_proceedFromTerminalRewards.Invoke(RunManager.Instance, null)!;
+            await System.Threading.Tasks.Task.WhenAll(tasks);
+        }
+        finally
+        {
+            _eventResumeTasks = previous;
         }
     }
 
@@ -1140,7 +1195,7 @@ public sealed class GameHost
     private bool CanUsePotionNow(MegaCrit.Sts2.Core.Models.PotionModel potion)
     {
         if (potion.IsQueued || potion.Owner.Creature.IsDead
-            || !potion.Owner.CanRemovePotions || !potion.PassesCustomUsabilityCheck)
+            || !potion.Owner.CanUseOrRemovePotions || !potion.PassesCustomUsabilityCheck)
         {
             return false;
         }
@@ -1154,7 +1209,7 @@ public sealed class GameHost
 
     /// <summary>True when the potion can be discarded now (not queued, owner alive and able to remove potions).</summary>
     private static bool CanDiscardPotionNow(MegaCrit.Sts2.Core.Models.PotionModel potion) =>
-        !potion.IsQueued && !potion.Owner.Creature.IsDead && potion.Owner.CanRemovePotions;
+        !potion.IsQueued && !potion.Owner.Creature.IsDead && potion.Owner.CanUseOrRemovePotions;
 
     /// <summary>
     /// Build the options that resolve a pending card choice. Single-select choices enumerate
@@ -1260,7 +1315,8 @@ public sealed class GameHost
                     break;
             }
         }
-        options.Add(GameOption.ProceedFromRewardsOption(player));
+        if (!set.DisallowSkipping || set.AllRewardsSuccessfullySelected)
+            options.Add(GameOption.ProceedFromRewardsOption(player));
         return options;
     }
 
@@ -1484,7 +1540,11 @@ public sealed class GameHost
                 // The effect resumes on the thread pool; pump until it finishes or blocks again.
                 // A choice raised mid-event or mid-rest-action resumes that effect's task rather
                 // than the combat action queue, so pump the matching surface.
-                if (InCombat)
+                if (_rewardSelectionTask is not null)
+                {
+                    PumpRewardSelectionUntilIdleOrChoice();
+                }
+                else if (InCombat)
                 {
                     // An enemy-turn choice resumes the enemy turn (background tasks, not the player
                     // action queue), so wait for the turn to finish / the player to act / a further
@@ -1601,11 +1661,29 @@ public sealed class GameHost
         var sync = RunManager.Instance.RewardsSetSynchronizer;
         if (IsLocalPlayer(set.Player))
         {
-            Pump(sync.SelectLocalReward(reward));
-            return;
+            _rewardSelectionTask = sync.SelectLocalReward(reward);
         }
-        int index = IndexOfReward(set, reward);
-        Pump((System.Threading.Tasks.Task)_selectRewardForPlayer.Invoke(sync, new object[] { set.Player, index })!);
+        else
+        {
+            int index = IndexOfReward(set, reward);
+            _rewardSelectionTask = (System.Threading.Tasks.Task)_selectRewardForPlayer.Invoke(sync, new object[] { set.Player, index })!;
+        }
+        PumpRewardSelectionUntilIdleOrChoice();
+    }
+
+    private void PumpRewardSelectionUntilIdleOrChoice()
+    {
+        var selection = _rewardSelectionTask!;
+        // 元の報酬画面のシグナルは既に完了しているため、ここでは待機対象に含めない。
+        int ready = System.Threading.Tasks.Task.WaitAny(
+            new[] { selection, Selector.PendingSignal, CrystalSphereSignal, BundleSignal }, 10000);
+        if (ready < 0)
+            throw new System.TimeoutException("Timed out waiting for reward selection or its card choice.");
+        if (selection.IsCompleted)
+        {
+            selection.GetAwaiter().GetResult();
+            _rewardSelectionTask = null;
+        }
     }
 
     private static int IndexOfReward(
@@ -1697,6 +1775,9 @@ public sealed class GameHost
             throw new InvalidOperationException("Not on a rewards screen to proceed from.");
         }
         var sync = RunManager.Instance.RewardsSetSynchronizer;
+        if (PendingRewards.DisallowSkipping && !PendingRewards.AllRewardsSuccessfullySelected)
+            throw new InvalidOperationException("These rewards must be taken before proceeding.");
+        bool postCombat = PendingRewards.Room is MegaCrit.Sts2.Core.Rooms.CombatRoom;
         if (!sync.IsRewardsSetCompleted(PendingRewards))
         {
             // Skip the remaining rewards of the current set, routed by its owner.
@@ -1723,8 +1804,18 @@ public sealed class GameHost
             }
         }
 
-        if (resolve is null)
+        if (resolve is null || postCombat)
         {
+            resolve?.TrySetResult();
+            if (_suspendedRoomTask is { } restoring)
+            {
+                PumpRoomTaskUntilIdleOrChoice(restoring);
+                if (restoring.IsCompleted)
+                {
+                    restoring.GetAwaiter().GetResult();
+                    _suspendedRoomTask = null;
+                }
+            }
             // A post-combat set. In a multi-player fight each alive player gets their own rewards,
             // surfaced one at a time — if another player's set is queued, surface it and stay on the
             // rewards screen rather than leaving the room.
@@ -1737,7 +1828,10 @@ public sealed class GameHost
             // Last set done. If this was an act-ending boss room, advance to the next act (or, on the
             // final act, into the Architect victory event) instead of returning to the now-empty map.
             // Otherwise the player is back on the map.
-            TryAdvanceActAfterBoss();
+            if (Run.CurrentRoom is not MegaCrit.Sts2.Core.Rooms.CombatRoom room || !TryResumeParentEvent(room))
+            {
+                TryAdvanceActAfterBoss();
+            }
             return;
         }
 
@@ -2168,6 +2262,7 @@ public sealed class GameHost
             throw new System.TimeoutException(
                 "Timed out pumping a room task (waiting for it to finish, a card choice, rewards, or the Crystal Sphere minigame).");
         }
+        if (roomTask.IsCompleted) roomTask.GetAwaiter().GetResult();
         if (!EffectSuspended)
         {
             DrainActionQueue();
@@ -2449,9 +2544,83 @@ public sealed class GameHost
         // unresolved choice). Otherwise the turn settled, so drain anything it enqueued.
         if (!EffectSuspended)
         {
+            // IsInProgressは終了処理の冒頭でfalseになる。自動プレイと山札の後始末まで待つ。
+            if (!cm.IsInProgress)
+            {
+                var loop = (System.Threading.Tasks.Task)_combatTurnLoopTask.GetValue(cm)!;
+                Pump(loop.WaitAsync(TimeSpan.FromMilliseconds(timeoutMs)));
+            }
             DrainActionQueue();
         }
     }
+
+    // 終了要求の反映前はまだPlayのため、次のラウンドへ進んだことも待つ。
+    private void WaitForNextPlayerTurnOrCombatEnd(Player player, int endedRound, int timeoutMs = 5000)
+    {
+        var cm = MegaCrit.Sts2.Core.Combat.CombatManager.Instance;
+        var tcs = new System.Threading.Tasks.TaskCompletionSource(
+            System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+
+        void TryComplete()
+        {
+            if (PlayerCanActOrCombatEnded(cm, player)
+                && (!cm.IsInProgress || Combat!.RoundNumber > endedRound))
+            {
+                tcs.TrySetResult();
+            }
+        }
+
+        void OnTurnStarted(MegaCrit.Sts2.Core.Combat.CombatState _) => TryComplete();
+        void OnCombatEnded(MegaCrit.Sts2.Core.Rooms.CombatRoom _) => tcs.TrySetResult();
+
+        // Subscribe before the first check so we cannot miss the transition.
+        cm.TurnStarted += OnTurnStarted;
+        cm.CombatEnded += OnCombatEnded;
+        MegaCrit.Sts2.Core.Entities.Players.PlayerCombatState? pcs = player.PlayerCombatState;
+        if (pcs is not null)
+        {
+            pcs.PlayerTurnPhaseChanged += TryComplete;
+        }
+        try
+        {
+            TryComplete(); // in case it is already satisfied
+            int idx = System.Threading.Tasks.Task.WaitAny(
+                new[] { tcs.Task, Selector.PendingSignal, CustomRewardSignal, CrystalSphereSignal, BundleSignal },
+                timeoutMs);
+            if (idx < 0)
+            {
+                throw new System.TimeoutException(
+                    "Timed out waiting for the player's turn to resume or combat to end.");
+            }
+        }
+        finally
+        {
+            cm.TurnStarted -= OnTurnStarted;
+            cm.CombatEnded -= OnCombatEnded;
+            if (pcs is not null)
+            {
+                pcs.PlayerTurnPhaseChanged -= TryComplete;
+            }
+        }
+
+        // A surfaced choice leaves the enemy task suspended; don't drain (it would block on the
+        // unresolved choice). Otherwise the turn settled, so drain anything it enqueued.
+        if (!EffectSuspended)
+        {
+            // IsInProgressは終了処理の冒頭でfalseになる。自動プレイと山札の後始末まで待つ。
+            if (!cm.IsInProgress)
+            {
+                var loop = (System.Threading.Tasks.Task)_combatTurnLoopTask.GetValue(cm)!;
+                Pump(loop.WaitAsync(TimeSpan.FromMilliseconds(timeoutMs)));
+            }
+            DrainActionQueue();
+        }
+    }
+
+    private static readonly System.Reflection.PropertyInfo _combatTurnLoopTask =
+        typeof(MegaCrit.Sts2.Core.Combat.CombatManager).GetProperty(
+            "DebugOnlyCurrentTurnLoopTask",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
 
     private static bool PlayerCanActOrCombatEnded(MegaCrit.Sts2.Core.Combat.CombatManager cm, Player player)
     {

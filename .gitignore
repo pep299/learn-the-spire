@@ -19,3 +19,16 @@ TestResults/
 # Python (lts2_agent reference package)
 __pycache__/
 *.pyc
+
+# Local game inputs and private validation output
+.dotnet/
+.runtime/
+.private/
+artifacts/
+native/
+*.dll
+*.dylib
+*.pdb
+*.pck
+*.save
+*.jsonl

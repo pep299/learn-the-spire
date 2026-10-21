@@ -120,6 +120,11 @@ public sealed class PublicApiTests
             int guard = 0;
             while (host.InCombat && guard++ < 100)
             {
+                if (host.GetState().Phase == GamePhase.Choice)
+                {
+                    host.Apply(host.ListOptions().First(o => o.Kind == OptionKind.SelectCards));
+                    continue;
+                }
                 GameOption? play = host.ListOptions().FirstOrDefault(o => o.Kind == OptionKind.PlayCard);
                 if (play is null)
                 {

@@ -86,6 +86,7 @@ public sealed class NecrobinderStrategyTests
     public void Defense_CountsLiveOstyHpAsBufferAgainstIncomingAttacks()
     {
         GameHost host = StartCombatAs("Necrobinder");
+        TestNav.WaitForAttackIntent(host);
         CombatState combat = host.Combat!;
         Player player = combat.Players.Single();
         PlayerCombatState pcs = player.PlayerCombatState!;

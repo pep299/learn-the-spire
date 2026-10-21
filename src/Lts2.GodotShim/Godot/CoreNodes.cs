@@ -174,6 +174,7 @@ public class CanvasItem : Node
     // visibility (Crusher.AfterAddedToRoom). Route them through the same backing as the property.
     public void SetVisible(bool visible) => Visible = visible;
     public bool IsVisible() => Visible;
+    public void SetSelfModulate(Color color) => SelfModulate = color;
 
     public void Show() => Visible = true;
     public void Hide() => Visible = false;
@@ -184,6 +185,8 @@ public class CanvasItem : Node
     // visuals load). Headless there is no viewport, so an empty rect is the inert answer.
     public Rect2 GetViewportRect() => default;
 }
+
+public class CanvasGroup : Node2D { }
 
 public class Control : CanvasItem
 {

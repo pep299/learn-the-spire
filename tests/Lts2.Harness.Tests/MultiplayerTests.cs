@@ -24,7 +24,7 @@ public sealed class MultiplayerTests
     [Fact]
     public void StartNewRun_WithTwoPlayers_BootsBothWithDistinctNetIdsAndDecks()
     {
-        GameHost host = GameHost.StartNewRun(seed: "TESTSEED", playerCount: 2);
+        GameHost host = GameHost.StartNewRun(seed: "TEST4", playerCount: 2);
 
         GameState state = host.GetState();
         _out.WriteLine($"players={state.Players.Count}");
@@ -47,7 +47,7 @@ public sealed class MultiplayerTests
 
     private void RunTwoPlayerNavigation()
     {
-        GameHost host = GameHost.StartNewRun(seed: "TESTSEED", playerCount: 2);
+        GameHost host = GameHost.StartNewRun(seed: "TEST4", playerCount: 2);
         host.EnterFirstRoom();
 
         // The party opens on the Neow ancient event — each player gets their *own* instance and
@@ -110,7 +110,7 @@ public sealed class MultiplayerTests
             {
                 fallback = i;
             }
-            if (opt.Relic is { HasUponPickupEffect: true })
+            if (opt.Relic is {} relic && relic.GetType().GetMethod(nameof(RelicModel.AfterObtained))?.DeclaringType != typeof(RelicModel))
             {
                 continue;
             }
@@ -127,7 +127,7 @@ public sealed class MultiplayerTests
 
     private void RunSharedEventVoting()
     {
-        GameHost host = GameHost.StartNewRun(seed: "TESTSEED", playerCount: 2);
+        GameHost host = GameHost.StartNewRun(seed: "TEST4", playerCount: 2);
         host.EnterFirstRoom();
         foreach (Player player in host.Run.Players) // resolve each player's own Neow
         {
@@ -203,7 +203,7 @@ public sealed class MultiplayerTests
 
     private void RunRestSite()
     {
-        GameHost host = StartTwoPlayerOnMap("TESTSEED");
+        GameHost host = StartTwoPlayerOnMap("TEST4");
         // Damage both players so a rest (heal 30% max HP) is observable.
         foreach (Player p in host.Run.Players)
         {
@@ -240,7 +240,7 @@ public sealed class MultiplayerTests
 
     private void RunShop()
     {
-        GameHost host = StartTwoPlayerOnMap("TESTSEED");
+        GameHost host = StartTwoPlayerOnMap("TEST4");
         foreach (Player p in host.Run.Players)
         {
             p.Gold += 999; // afford anything
@@ -276,7 +276,7 @@ public sealed class MultiplayerTests
 
     private void RunTreasureVoting()
     {
-        GameHost host = GameHost.StartNewRun(seed: "TESTSEED", playerCount: 2);
+        GameHost host = GameHost.StartNewRun(seed: "TEST4", playerCount: 2);
         host.EnterFirstRoom();
         foreach (Player player in host.Run.Players) // resolve each player's own Neow
         {
@@ -340,7 +340,7 @@ public sealed class MultiplayerTests
 
     private void RunPostCombatRewards()
     {
-        GameHost host = GameHost.StartNewRun(seed: "TESTSEED", playerCount: 2);
+        GameHost host = GameHost.StartNewRun(seed: "TEST4", playerCount: 2);
         foreach (Player p in host.Run.Players)
         {
             p.Creature.SetMaxHpInternal(9999);
@@ -385,7 +385,7 @@ public sealed class MultiplayerTests
 
     private void RunTwoPlayerCombat()
     {
-        GameHost host = GameHost.StartNewRun(seed: "TESTSEED", playerCount: 2);
+        GameHost host = GameHost.StartNewRun(seed: "TEST4", playerCount: 2);
 
         // Buff both players to a large HP pool so the fight is survivable, then drop straight into a
         // shared combat (bypassing the per-player Neow/map navigation, which is separate M6 work).

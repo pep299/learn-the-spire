@@ -12,6 +12,18 @@ namespace Lts2.Harness.Tests;
 /// </summary>
 internal static class TestNav
 {
+    public static void WaitForAttackIntent(GameHost host)
+    {
+        // 初手が攻撃とは限らない。攻撃予告の変換を検証する局面まで、通常のターンを進める。
+        for (int turn = 0; turn < 5; turn++)
+        {
+            if (host.GetState().Combat!.Enemies.Any(e => e.Intents.Any(i => i.Damage is > 0)))
+                return;
+            host.Apply(host.ListOptions().Single(o => o.Kind == OptionKind.EndTurn));
+        }
+        throw new InvalidOperationException("No attack intent within five turns.");
+    }
+
     /// <summary>
     /// Start a run and advance to the map: enter the first room (the Neow ancient event) and
     /// take its first option, which finishes the event and leaves the player on the map.
@@ -67,6 +79,20 @@ internal static class TestNav
 
         GameOption pick = host.ListOptions().First(o => o.EventOptionIndex == chosenIndex);
         host.Apply(pick);
+        // v0.111では祝福の取得後にも選択が発生する。未解決のまま次の部屋へ入ると停止する。
+        for (int step = 0; host.GetState().Phase != GamePhase.Map && step < 20; step++)
+        {
+            GameState state = host.GetState();
+            if (state.Phase == GamePhase.Choice)
+                host.ApplyCardChoice(Enumerable.Range(0, state.PendingChoice!.MinSelect).ToArray());
+            else if (state.Phase == GamePhase.Reward)
+                host.Apply(host.ListOptions().Single(o => o.Kind == OptionKind.ProceedFromRewards));
+            else if (state.Phase == GamePhase.BundleChoice)
+                host.Apply(host.ListOptions().First(o => o.Kind == OptionKind.ChooseBundle));
+            else
+                throw new InvalidOperationException($"Opening ancient did not resolve: {state.Phase}");
+        }
+        Assert.Equal(GamePhase.Map, host.GetState().Phase);
     }
 
     /// <summary>
@@ -78,6 +104,13 @@ internal static class TestNav
         var creature = host.Run.Players[0].Creature;
         creature.SetMaxHpInternal(maxHp);
         creature.SetCurrentHpInternal(currentHp);
+    }
+
+    public static void PreserveTraversalHp(GameHost host)
+    {
+        // 経路・Act遷移のテスト用。イベントによる最大HPの置換後にも、生存用の準備状態を戻す。
+        if (!host.Run.IsGameOver && host.Run.Players[0].Creature.MaxHp < 9999)
+            SetHp(host, maxHp: 9999, currentHp: 9999);
     }
 
     /// <summary>
