@@ -21,7 +21,7 @@ Trial event's portrait UI (see Key mechanisms). Ascension is plumbed end-to-end 
 validated (`AscensionTests`; see Ascension below). Remaining breadth (local multiplayer, deck-management
 screens, Daily/Custom modes) is **not built**; see `docs/plans/`.
 
-v0.111ではイベント内戦闘から親イベントへ戻る効果、遺物報酬内のカード選択、
+v0.111ではイベント内戦闘から親イベントへ戻る効果、遺物報酬内のカード・束選択とネストした報酬、
 ターン終了要求の反映待ちを補正しています。保存にはハーネス専用のマップマーカーが含まれ、
 ゲーム本体へのインポートはできません。現在の利用条件は[対応手順](../v111.md)を参照してください。
 独自の観測・操作ログは`addons/public-observation/`の別ソリューションで、本体の依存ではありません。
@@ -177,6 +177,11 @@ via `N*.Instance` singletons we leave **null** — the logic null-guards them.
   to quiescence (the effect then continues — e.g. the Neow option finishes); for a post-combat set
   it just returns to the map. The pumps wait on the custom-reward signal too, so a suspended offer
   returns control instead of deadlocking.
+- 報酬から取得した遺物が別の報酬を開く場合は、報酬セット・完了ゲート・取得タスクを
+  スタックへ保持する。内側を閉じたら外側の取得タスクを再開し、その完了または次の選択まで待つ。
+  Neow's Bonesの必須報酬もスキップせず、すべて取得してからイベントを完了する。
+  fake multiplayerのリモートプレイヤーにはゲームの`RewardsSet.testSelector`が呼ばれないため、
+  複数人のイベント内戦闘後のカスタム報酬は未対応（[v0.111の制約](../v111.md)）。
 - **Events** (`GamePhase.Event`): an out-of-combat event room (the opening Neow ancient event,
   or a regular map event) surfaces its `EventModel.CurrentOptions` as `ChooseEventOption` options
   (unlocked, non-proceed ones, projected as `EventView`). `Apply` calls

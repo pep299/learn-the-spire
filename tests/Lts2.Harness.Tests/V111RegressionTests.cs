@@ -11,6 +11,50 @@ namespace Lts2.Harness.Tests;
 
 public sealed class V111RegressionTests
 {
+    [Fact]
+    public async Task NestedRelicRewards_ReturnToMandatoryParentAndFinish() =>
+        await Task.Run(() =>
+        {
+            GameHost host = GameHost.StartNewRun("NATURAL17");
+            host.EnterFirstRoom();
+            host.Apply(host.ListOptions().Single(o => o.Description.Contains("NEOWS_BONES")));
+            host.Apply(host.ListOptions().Single(o => o.Description == "Take relic LOST_COFFER"));
+            Assert.Equal(GamePhase.Reward, host.GetState().Phase);
+            Assert.DoesNotContain(host.ListOptions(), o => o.Description == "Take relic CURSED_PEARL");
+            int deck = host.Run.Players[0].Deck.Cards.Count;
+            host.Apply(host.ListOptions().First(o => o.Kind == OptionKind.TakeReward && o.Card is not null));
+            Assert.Equal(deck + 1, host.Run.Players[0].Deck.Cards.Count);
+            host.Apply(host.ListOptions().Single(o => o.Kind == OptionKind.ProceedFromRewards));
+            Assert.Equal(GamePhase.Reward, host.GetState().Phase);
+            Assert.DoesNotContain(host.ListOptions(), o => o.Kind == OptionKind.ProceedFromRewards);
+            Assert.DoesNotContain(host.ListOptions(), o => o.Description == "Take relic LOST_COFFER");
+            host.Apply(host.ListOptions().Single(o => o.Description == "Take relic CURSED_PEARL"));
+            host.Apply(host.ListOptions().Single(o => o.Kind == OptionKind.ProceedFromRewards));
+            Assert.Equal(GamePhase.Map, host.GetState().Phase);
+            Assert.Contains("LOST_COFFER", host.GetState().Players[0].Relics);
+            Assert.Contains("CURSED_PEARL", host.GetState().Players[0].Relics);
+            Assert.Equal(2, host.GetState().Players[0].Deck.Count(c => c.Type == MegaCrit.Sts2.Core.Entities.Cards.CardType.Curse));
+        }).WaitAsync(TimeSpan.FromSeconds(30));
+
+    [Fact]
+    public async Task MandatoryRelicBundle_WaitsForCardsBeforeReturningToRewards() =>
+        await Task.Run(() =>
+        {
+            GameHost host = GameHost.StartNewRun("NATURAL85");
+            host.EnterFirstRoom();
+            host.Apply(host.ListOptions().Single(o => o.Description.Contains("NEOWS_BONES")));
+            host.Apply(host.ListOptions().Single(o => o.Description == "Take relic SCROLL_BOXES"));
+            Assert.Equal(GamePhase.BundleChoice, host.GetState().Phase);
+            int deck = host.Run.Players[0].Deck.Cards.Count;
+            host.Apply(host.ListOptions().First(o => o.Kind == OptionKind.ChooseBundle));
+            Assert.Equal(deck + 3, host.Run.Players[0].Deck.Cards.Count);
+            Assert.Equal(GamePhase.Reward, host.GetState().Phase);
+            Assert.DoesNotContain(host.ListOptions(), o => o.Description == "Take relic SCROLL_BOXES");
+            host.Apply(host.ListOptions().Single(o => o.Kind == OptionKind.TakeReward));
+            host.Apply(host.ListOptions().Single(o => o.Kind == OptionKind.ProceedFromRewards));
+            Assert.Equal(GamePhase.Map, host.GetState().Phase);
+        }).WaitAsync(TimeSpan.FromSeconds(30));
+
     [Theory]
     [InlineData(0, GamePhase.Reward)]
     [InlineData(1, GamePhase.Map)]

@@ -37,7 +37,22 @@ public sealed class GameHost
     /// The rewards set currently on offer (for its <c>set.Player</c>), or null when not on the rewards
     /// screen. Surfaced as <see cref="GamePhase.Reward"/> and resolved through the reward options.
     /// </summary>
-    internal MegaCrit.Sts2.Core.Rewards.RewardsSet? PendingRewards { get; private set; }
+    internal MegaCrit.Sts2.Core.Rewards.RewardsSet? PendingRewards
+    {
+        get => _rewardOffer?.Set;
+        private set => _rewardOffer = value is null ? null : new RewardOffer(value);
+    }
+
+    private sealed class RewardOffer(MegaCrit.Sts2.Core.Rewards.RewardsSet set,
+        System.Threading.Tasks.TaskCompletionSource? resolve = null)
+    {
+        public MegaCrit.Sts2.Core.Rewards.RewardsSet Set { get; } = set;
+        public System.Threading.Tasks.TaskCompletionSource? Resolve { get; } = resolve;
+        public System.Threading.Tasks.Task? SelectionTask { get; set; }
+    }
+
+    private RewardOffer? _rewardOffer;
+    private readonly Stack<RewardOffer> _suspendedRewardOffers = new();
 
     // Additional players' post-combat reward sets awaiting their turn. A multi-player fight gives each
     // alive player their own rewards; the harness surfaces them one player at a time (PendingRewards),
@@ -56,7 +71,6 @@ public sealed class GameHost
     // relic's on-obtain AfterObtained) kept in flight when it suspends on a custom reward screen so
     // ProceedFromRewards can resume it. Null otherwise.
     private System.Threading.Tasks.Task? _suspendedRoomTask;
-    private System.Threading.Tasks.Task? _rewardSelectionTask;
 
     private List<System.Threading.Tasks.Task>? _eventResumeTasks;
     internal static Action<System.Threading.Tasks.Task>? EventResumeTaskHook;
@@ -78,7 +92,6 @@ public sealed class GameHost
     // the agent makes the same explicit take-or-skip choice rather than the rewards being
     // silently auto-taken (which is what RewardsSet.Offer does in TestMode without a selector).
     private readonly object _rewardGate = new();
-    private System.Threading.Tasks.TaskCompletionSource? _customRewardResolve;
     private System.Threading.Tasks.TaskCompletionSource _customRewardSignal = NewSignal();
 
     private static System.Threading.Tasks.TaskCompletionSource NewSignal() =>
@@ -157,7 +170,7 @@ public sealed class GameHost
     /// <summary>True while a custom (blocking) reward set is awaiting the agent's resolution.</summary>
     private bool CustomRewardPending
     {
-        get { lock (_rewardGate) { return _customRewardResolve is not null; } }
+        get { lock (_rewardGate) { return _rewardOffer?.Resolve is not null; } }
     }
 
     /// <summary>
@@ -210,7 +223,11 @@ public sealed class GameHost
     /// <c>ModelDb.AllCharacters</c> (call <see cref="GameRuntime.EnsureInitialized"/> first so the
     /// model database is populated).
     /// </summary>
-    public static GameHost StartNewRun(string seed, IReadOnlyList<CharacterModel> characters, int ascension = 0, bool seededActs = false)
+    public static GameHost StartNewRun(string seed, IReadOnlyList<CharacterModel> characters, int ascension = 0) =>
+        StartNewRun(seed, characters, ascension, seededActs: false);
+
+    /// <summary>Actの生成方法を指定してランを開始する。</summary>
+    public static GameHost StartNewRun(string seed, IReadOnlyList<CharacterModel> characters, int ascension, bool seededActs)
     {
         if (characters is null || characters.Count < 1)
         {
@@ -416,14 +433,9 @@ public sealed class GameHost
         System.Threading.Tasks.TaskCompletionSource resolve = NewSignal();
         lock (_rewardGate)
         {
-            if (PendingRewards is not null)
-            {
-                throw new InvalidOperationException(
-                    "A rewards set is already pending when a custom reward was offered.");
-            }
-            PendingRewards = set;
+            if (_rewardOffer is not null) _suspendedRewardOffers.Push(_rewardOffer);
+            _rewardOffer = new RewardOffer(set, resolve);
             if (set.Room is MegaCrit.Sts2.Core.Rooms.CombatRoom room) _rewardedRoom = room;
-            _customRewardResolve = resolve;
             _customRewardSignal.TrySetResult();
         }
         return resolve.Task;
@@ -485,7 +497,11 @@ public sealed class GameHost
         // Resume the effect that raised the choice. ScrollBoxes' AfterObtained is a relic on-obtain
         // effect run during the Neow event option task; a mid-combat relic would resume the action
         // queue instead. Same dispatch as the custom-reward resume.
-        if (_suspendedRoomTask is { IsCompleted: false } roomTask)
+        if (_rewardOffer?.SelectionTask is not null)
+        {
+            PumpRewardSelectionUntilIdleOrChoice(_rewardOffer);
+        }
+        else if (_suspendedRoomTask is { IsCompleted: false } roomTask)
         {
             PumpRoomTaskUntilIdleOrChoice(roomTask);
             if (_suspendedRoomTask.IsCompleted)
@@ -1545,9 +1561,9 @@ public sealed class GameHost
                 // The effect resumes on the thread pool; pump until it finishes or blocks again.
                 // A choice raised mid-event or mid-rest-action resumes that effect's task rather
                 // than the combat action queue, so pump the matching surface.
-                if (_rewardSelectionTask is not null)
+                if (_rewardOffer?.SelectionTask is not null)
                 {
-                    PumpRewardSelectionUntilIdleOrChoice();
+                    PumpRewardSelectionUntilIdleOrChoice(_rewardOffer);
                 }
                 else if (InCombat)
                 {
@@ -1662,32 +1678,33 @@ public sealed class GameHost
     /// </summary>
     private void SelectRewardForOwner(MegaCrit.Sts2.Core.Rewards.Reward reward)
     {
-        MegaCrit.Sts2.Core.Rewards.RewardsSet set = PendingRewards!;
+        RewardOffer offer = _rewardOffer!;
+        MegaCrit.Sts2.Core.Rewards.RewardsSet set = offer.Set;
         var sync = RunManager.Instance.RewardsSetSynchronizer;
+        lock (_rewardGate) { _customRewardSignal = NewSignal(); }
         if (IsLocalPlayer(set.Player))
         {
-            _rewardSelectionTask = sync.SelectLocalReward(reward);
+            offer.SelectionTask = sync.SelectLocalReward(reward);
         }
         else
         {
             int index = IndexOfReward(set, reward);
-            _rewardSelectionTask = (System.Threading.Tasks.Task)_selectRewardForPlayer.Invoke(sync, new object[] { set.Player, index })!;
+            offer.SelectionTask = (System.Threading.Tasks.Task)_selectRewardForPlayer.Invoke(sync, new object[] { set.Player, index })!;
         }
-        PumpRewardSelectionUntilIdleOrChoice();
+        PumpRewardSelectionUntilIdleOrChoice(offer);
     }
 
-    private void PumpRewardSelectionUntilIdleOrChoice()
+    private void PumpRewardSelectionUntilIdleOrChoice(RewardOffer offer)
     {
-        var selection = _rewardSelectionTask!;
-        // 元の報酬画面のシグナルは既に完了しているため、ここでは待機対象に含めない。
+        var selection = offer.SelectionTask!;
         int ready = System.Threading.Tasks.Task.WaitAny(
-            new[] { selection, Selector.PendingSignal, CrystalSphereSignal, BundleSignal }, 10000);
+            new[] { selection, Selector.PendingSignal, CustomRewardSignal, CrystalSphereSignal, BundleSignal }, 10000);
         if (ready < 0)
             throw new System.TimeoutException("Timed out waiting for reward selection or its card choice.");
         if (selection.IsCompleted)
         {
             selection.GetAwaiter().GetResult();
-            _rewardSelectionTask = null;
+            offer.SelectionTask = null;
         }
     }
 
@@ -1798,15 +1815,20 @@ public sealed class GameHost
         DrainActionQueue();
 
         System.Threading.Tasks.TaskCompletionSource? resolve;
+        RewardOffer? parent;
         lock (_rewardGate)
         {
-            resolve = _customRewardResolve;
-            _customRewardResolve = null;
-            PendingRewards = null;
-            if (resolve is not null)
-            {
-                _customRewardSignal = NewSignal();
-            }
+            resolve = _rewardOffer!.Resolve;
+            parent = _suspendedRewardOffers.Count > 0 ? _suspendedRewardOffers.Pop() : null;
+            _rewardOffer = parent;
+            _customRewardSignal = NewSignal();
+        }
+
+        if (parent is not null)
+        {
+            resolve!.TrySetResult();
+            PumpRewardSelectionUntilIdleOrChoice(parent);
+            return;
         }
 
         if (resolve is null || postCombat)
