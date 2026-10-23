@@ -6,6 +6,8 @@ using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Potions;
+using MegaCrit.Sts2.Core.Combat;
+using MegaCrit.Sts2.Core.Map;
 using Sts2Recorder;
 using Lts2.Harness;
 
@@ -15,6 +17,93 @@ namespace PublicObservation.Tests;
 
 public sealed class PublicRecorderTests
 {
+    [Fact]
+    public void CharacterStart_PreservesThreeArgumentDelegate()
+    {
+        GameRuntime.EnsureInitialized();
+        Func<string, IReadOnlyList<CharacterModel>, int, GameHost> start = GameHost.StartNewRun;
+        var character = ModelDb.AllCharacters.First(c => c.Id.Entry == "IRONCLAD");
+        GameHost host = start("COMPAT111", new[] { character }, 3);
+        Assert.Equal(3, host.Run.AscensionLevel);
+        Assert.Equal(character.Id, host.Run.Players.Single().Character.Id);
+    }
+
+    [Theory]
+    [InlineData("REVIEW5", "SCROLL_BOXES")]
+    [InlineData("NATURAL17", "NEOWS_BONES")]
+    public void SuspendedRelicEffect_RemainsPendingAtExit(string seed, string relic)
+    {
+        using var session = new RecorderSession(seed);
+        session.Step(o => o.Description.Contains(relic));
+        var events = session.CloseAndReadLog();
+        Assert.True(events.Single(e => e.GetProperty("kind").GetString() == "action_successor")
+            .GetProperty("data").GetProperty("pendingEffect").GetBoolean());
+        Assert.True(events.Last().GetProperty("data").GetProperty("pendingEffect").GetBoolean());
+    }
+
+    [Fact]
+    public void BundleInput_ClearsPendingEffectAfterCardsAreAdded()
+    {
+        using var session = new RecorderSession("REVIEW5");
+        session.Step(o => o.Description.Contains("SCROLL_BOXES"));
+        int deck = session.Host.Run.Players[0].Deck.Cards.Count;
+        session.Step(o => o.Kind == OptionKind.ChooseBundle);
+        Assert.Equal(deck + 3, session.Host.Run.Players[0].Deck.Cards.Count);
+        var events = session.CloseAndReadLog();
+        Assert.False(events.Last().GetProperty("data").GetProperty("pendingEffect").GetBoolean());
+    }
+
+    [Fact]
+    public void NestedRewardInputs_ReportEffectWaitWithoutInventingActionParents()
+    {
+        using var session = new RecorderSession("NATURAL17");
+        session.Step(o => o.Description.Contains("NEOWS_BONES"));
+        session.Step(o => o.Description == "Take relic LOST_COFFER");
+        session.Step(o => o.Kind == OptionKind.TakeReward && o.Card is not null);
+        session.Step(o => o.Kind == OptionKind.ProceedFromRewards);
+        Assert.Contains(session.Host.ListOptions(), o => o.Description == "Take relic CURSED_PEARL");
+        var events = session.CloseAndReadLog();
+        Assert.True(events.Last().GetProperty("data").GetProperty("pendingEffect").GetBoolean());
+        var inputs = events.Where(e => e.GetProperty("kind").GetString() == "action_initiated").ToArray();
+        Assert.Equal(4, inputs.Length);
+        Assert.All(inputs, input => Assert.False(input.GetProperty("data").TryGetProperty("parentActionSequence", out _)));
+        Assert.All(events.Where(e => e.GetProperty("kind").GetString() == "action_successor"),
+            successor => Assert.Equal("next_decision_observed", successor.GetProperty("data").GetProperty("status").GetString()));
+    }
+
+    [Fact]
+    public async Task OrdinaryCombatReward_IsNotASuspendedInput()
+    {
+        using var session = new RecorderSession();
+        session.ToCombat();
+        await CreatureCmd.Kill(session.Host.Combat!.Enemies.Where(e => e.IsAlive).ToArray(), force: true);
+        await CombatManager.Instance.CheckWinCondition();
+        typeof(GameHost).GetMethod("TryOfferCombatRewards", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(session.Host, null);
+        session.Step(o => o.Kind == OptionKind.TakeReward);
+        Assert.Equal(GamePhase.Reward, session.Host.GetState().Phase);
+        var events = session.CloseAndReadLog();
+        Assert.False(events.Last().GetProperty("data").GetProperty("pendingEffect").GetBoolean());
+    }
+
+    [Fact]
+    public void SmithSelection_IdentifiesUpgradeWithoutChangingCandidateState()
+    {
+        using var session = new RecorderSession("7KQ2M0AB9C");
+        session.Step(o => o.Description.Contains("NEW_LEAF"));
+        session.Recorder.SelectCards(new[] { 2 });
+        var rest = session.Host.Run.Map.GetAllMapPoints().First(p => p.PointType == MapPointType.RestSite);
+        session.Host.MoveTo(rest.coord);
+        session.Step(o => o.RestOptionId == "SMITH");
+        using var json = JsonDocument.Parse(session.Observe());
+        var selection = json.RootElement.GetProperty("state").GetProperty("selection");
+        Assert.True(selection.GetProperty("isUpgradeSelection").GetBoolean());
+        Assert.All(selection.GetProperty("cards").EnumerateArray(), card =>
+            Assert.Equal(0, card.GetProperty("cardDetails").GetProperty("state").GetProperty("upgrade").GetInt32()));
+        Assert.All(session.Host.Run.Players[0].Deck.Cards, card => Assert.False(card.IsUpgraded));
+        session.Recorder.SelectCards(new[] { 0 });
+        Assert.Single(session.Host.Run.Players[0].Deck.Cards, card => card.IsUpgraded);
+    }
+
     [Fact]
     public async Task UnorderedDraw_DoesNotRevealIdentityOrder() =>
         await Task.Run(() => UnorderedDraw_DoesNotRevealIdentityOrderBody()).WaitAsync(TimeSpan.FromSeconds(30));
@@ -131,6 +220,7 @@ public sealed class PublicRecorderTests
     {
         private readonly string directory = Path.Combine(Path.GetTempPath(), "learn-recorder-test-" + Guid.NewGuid().ToString("N"));
         public DllRecorder Recorder { get; }
+        private bool closed;
         public GameHost Host => Recorder.Host!;
         public RecorderSession(string seed = "MULTICARD111")
         {
@@ -139,6 +229,17 @@ public sealed class PublicRecorderTests
             Recorder.Reset(seed, "seeded_all_unlocked");
         }
         public string Observe() => JsonSerializer.Serialize(Recorder.Observe());
+        public void Step(Func<GameOption, bool> predicate) => Recorder.Step(Host.ListOptions().ToList().FindIndex(o => predicate(o)));
+        public JsonElement[] CloseAndReadLog()
+        {
+            Recorder.Dispose();
+            closed = true;
+            return File.ReadLines(Path.Combine(directory, "events.jsonl")).Select(line =>
+            {
+                using var json = JsonDocument.Parse(line);
+                return json.RootElement.Clone();
+            }).ToArray();
+        }
         public void ToCombat()
         {
             for (int step = 0; Host.GetState().Phase != GamePhase.Combat; step++)
@@ -151,7 +252,7 @@ public sealed class PublicRecorderTests
         }
         public void Dispose()
         {
-            Recorder.Dispose();
+            if (!closed) Recorder.Dispose();
             Directory.Delete(directory, recursive: true);
         }
     }

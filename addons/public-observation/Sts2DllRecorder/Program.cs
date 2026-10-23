@@ -123,10 +123,10 @@ public sealed class DllRecorder:IDisposable
     private readonly string session="dll-"+DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmssfffZ");
     private readonly CardProjection cards=new();
     private readonly Dictionary<string,object> offerHistory=new(StringComparer.Ordinal);
-    private readonly List<long> suspendedActions=new();
     private string? root;
     private long eventSequence,actionSequence,decisionId;
     public GameHost? Host{get;private set;}
+    private bool PendingEffect=>Host!=null&&(bool)R(Host,"EffectSuspended");
     private string actGeneration="seeded_all_unlocked";
     private static object R(object value,string name)=>PublicData.Required(value,name);
     private static object? P(object? value,string name)=>PublicData.Property(value,name);
@@ -140,12 +140,12 @@ public sealed class DllRecorder:IDisposable
         string gameHash=Hash(game.Location);
         if(gameHash!="9cb4f1ad8c9f284aa8fec3122ffd6d780bbf543d875c817abdd12ff63fbf12b4")
             throw new InvalidDataException("検証対象のv0.111.0 DLLとハッシュが異なる。観測の対応を再検証する必要がある。");
-        Write("recorder_initialized",new{recorderRevision="dll-public-state-111-acceptance-2",observationRevision="public-state-v3",backend="learn_dll",
+        Write("recorder_initialized",new{recorderRevision="dll-public-state-111-acceptance-3",observationRevision="public-state-v4",backend="learn_dll",
             gameVersion="v0.111.0",guiReferenceVersion="v0.111.0",sameVersionComparison=false,assemblySha256=gameHash,
             harnessSha256=Hash(typeof(GameHost).Assembly.Location),recorderSha256=Hash(typeof(DllRecorder).Assembly.Location),
             actor="dll_driver",expertData=false,initialization="harness TestMode; start contract and restore provenance in run_started; not the owner GUI profile",
             localization="harness keys/template fallback; no game PCK localization tables loaded",
-            schemaNote="既存GUIのイベント構造を維持。GUI表示操作は存在しない。"});
+            schemaNote="入力と次の観測を記録。効果待ちはラン全体の状態で、入力ごとの効果完了や親子関係は推定しない。"});
     }
     public void Write(string kind,object? data,long? action=null)
         =>writer.WriteLine(JsonSerializer.Serialize(new{schema="sts2-gui-semantic-v1",kind,utc=DateTimeOffset.UtcNow,elapsedSeconds=clock.Elapsed.TotalSeconds,
@@ -153,7 +153,7 @@ public sealed class DllRecorder:IDisposable
     public void Reset(string seed,string mode="seeded_all_unlocked")
     {
         bool seededActs=mode switch{"seeded_all_unlocked"=>true,"default"=>false,_=>throw new ArgumentException("actGenerationはseeded_all_unlockedまたはdefault")};
-        if(Host!=null)Write("continuity_boundary",new{reason="reset",pending=suspendedActions.ToArray()});
+        if(Host!=null)Write("continuity_boundary",new{reason="reset",pendingEffect=PendingEffect});
         GameRuntime.EnsureInitialized();
         actGeneration=mode;
         Host=GameHost.StartNewRun(seed,new[]{MegaCrit.Sts2.Core.Models.ModelDb.AllCharacters.First(c=>c.Id.Entry=="IRONCLAD")},0,seededActs);Host.EnterFirstRoom();
@@ -173,13 +173,13 @@ public sealed class DllRecorder:IDisposable
                 throw new ArgumentException("指定seedが保存内のseedと一致しない");
         }
         string hash=Convert.ToHexString(SHA256.HashData(saveBytes)).ToLowerInvariant();
-        if(Host!=null)Write("continuity_boundary",new{reason="restore",pending=suspendedActions.ToArray()});
+        if(Host!=null)Write("continuity_boundary",new{reason="restore",pendingEffect=PendingEffect});
         Host=GameHost.RestoreFromJson(json,seed);actGeneration="saved_state";
         StartSegment(seed,"restored_segment",hash);
     }
     private void StartSegment(string seed,string continuity,string? sourceSaveSha256)
     {
-        root=Guid.NewGuid().ToString("N");offerHistory.Clear();suspendedActions.Clear();
+        root=Guid.NewGuid().ToString("N");offerHistory.Clear();
         Write("ready",new{mode="dll_host",automaticInput=false,coverage="public projection; GUI equivalence unverified"});
         Write("run_started",new{character=PublicData.Id(Host!.Run.Players[0].Character),ascension=Host.Run.AscensionLevel,actGeneration,continuity,sourceSaveSha256});
         // seedは再現メタデータにのみ置き、観測には渡さない。
@@ -272,13 +272,13 @@ public sealed class DllRecorder:IDisposable
             deck=Items(R(R(player,"Deck"),"Cards")).Select(c=>PublicData.Id(c)+((int)R(c,"CurrentUpgradeLevel")>0?"+"+R(c,"CurrentUpgradeLevel"):"")).OrderBy(x=>x,StringComparer.Ordinal).ToArray(),
             map=PublicData.Map(run),combat,
             room=new{type=P(run,"CurrentRoom")?.GetType().Name,id=P(P(run,"CurrentRoom"),"ModelId")?.ToString()}};
-        var selection=pending==null?null:new{min=R(pending,"MinSelect"),max=R(pending,"MaxSelect"),
+        var selection=pending==null?null:new{min=R(pending,"MinSelect"),max=R(pending,"MaxSelect"),isUpgradeSelection=R(pending,"IsUpgradeSelection"),
             cards=Items(R(pending,"Options")).Select((card,index)=>new{index,cardDetails=Card(card)}).ToArray(),selected=(object?)null,selectedCount=(int?)null};
         var state=new{phase=Phase(view.Phase),status,turn=active?R(pc!,"TurnNumber"):null,hand,enemies=active?Enemies(rawCombat!):Array.Empty<object>(),offers,
             selection,eventId=view.Event?.EventId,options=view.Event?.Options,rewards=view.Rewards,bundles=view.BundleChoice,treasure=view.Treasure,rest=view.RestSite,
             terminal=view.IsGameOver?(view.IsVictory?"victory":"death"):null};
         return new{state,actions,publicHistory=new{coverage="current_recorded_segment_only",shopOffers=offerHistory.Values.ToArray()},
-            resolution=new{engineActionsInProgress=(int?)null,evidence="host_apply_returned_or_initial_boundary",pendingChoice=view.Phase==GamePhase.Choice},
+            resolution=new{engineActionsInProgress=(int?)null,evidence="host_apply_returned_or_initial_boundary",pendingChoice=view.Phase==GamePhase.Choice,pendingEffect=PendingEffect},
             capabilities=new{backend="learn_dll",gameVersion="v0.111.0",actGeneration,presentationActions=false,renderedCardText=false,intentIcons=false,
                 supportedCharacters=new[]{"IRONCLAD"},supportedAscensions=new[]{0},explicitMultiCardIndices=true,drawPileIdentities=false,
                 localization="keys_or_template_fallback",unavailable=new Dictionary<string,string>()}};
@@ -308,23 +308,16 @@ public sealed class DllRecorder:IDisposable
     }
     private void ApplyDecision(Action apply,string id,string kind,object detail,object choice,object before)
     {
-        var host=Host!;long seq=++actionSequence;
-        long? parent=suspendedActions.Count>0?suspendedActions[^1]:null;
-        Write("action_initiated",new{actionId=id,kind,source="dll_host.Apply",role=parent==null?"player_input":"nested_input",parentActionSequence=parent,
+        long seq=++actionSequence;
+        Write("action_initiated",new{actionId=id,kind,source="dll_host.Apply",
             detail,choice,observation=before},seq);
         try
         {
             apply();Write("action_status",new{status="host_apply_returned"},seq);
-            var after=EmitObservation();Write("action_successor",new{actionId=id,status=host.GetState().Phase==GamePhase.Choice?"entered_nested_decision":"next_decision_observed",observation=after,
+            var after=EmitObservation();Write("action_successor",new{actionId=id,status="next_decision_observed",pendingEffect=PendingEffect,observation=after,
                 mechanicalCompletion="host.Apply returned; native GUI equivalence not certified"},seq);
-            if(host.GetState().Phase==GamePhase.Choice)suspendedActions.Add(seq);
-            else
-            {
-                foreach(var pending in suspendedActions.AsEnumerable().Reverse())Write("nested_action_closed",new{status="choice_accepted_and_decision_advanced",observation=after},pending);
-                suspendedActions.Clear();
-            }
         }
         catch(Exception e){Write("action_status",new{status="failed",error=e.ToString()},seq);throw;}
     }
-    public void Dispose(){Write("process_exit",new{pending=suspendedActions.ToArray()});writer.Dispose();}
+    public void Dispose(){Write("process_exit",new{pendingEffect=PendingEffect});writer.Dispose();}
 }

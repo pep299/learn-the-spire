@@ -44,6 +44,6 @@ for case in ([1] if args.save else args.cases):
     for o in observed:visit(o)
     forbidden=sorted(keys&{'seed','rng','rngState','drawOrder','relicGrabBag'})
     pair=all(sum(s['actionSequence']==a['actionSequence'] for s in successors)==1 and any(c['id']==a['data']['actionId'] for c in a['data']['observation']['actions']) for a in actions)
-    row={'case':case,'exitCode':p.returncode,'seconds':time.monotonic()-started,'boundaries':len(observed),'expectedBoundaries':len(expected),'allEqual':all(c['equal'] for c in checks) and len(observed)==len(expected),'actionsPaired':pair,'forbiddenKeys':forbidden,'pendingAtExit':events[-1]['data']['pending'],'firstDifferences':[c for c in checks if not c['equal']][:3]}
+    row={'case':case,'exitCode':p.returncode,'seconds':time.monotonic()-started,'boundaries':len(observed),'expectedBoundaries':len(expected),'allEqual':all(c['equal'] for c in checks) and len(observed)==len(expected),'actionsPaired':pair,'forbiddenKeys':forbidden,'pendingAtExit':events[-1]['data']['pendingEffect'],'firstDifferences':[c for c in checks if not c['equal']][:3]}
     row['passed']=row['exitCode']==0 and row['allEqual'] and pair and not forbidden and not row['pendingAtExit'];results.append(row);(out/'report.json').write_text(json.dumps(row,indent=2)+'\n');print(json.dumps(row),flush=True)
 (args.output/'summary.json').write_text(json.dumps(results,indent=2)+'\n')

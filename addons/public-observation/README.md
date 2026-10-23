@@ -30,7 +30,14 @@ bash scripts/run-public.sh --log /absolute/path/to/new-events.jsonl
 `index`は直前の`actions[].detail.nativeOptionIndex`、`cardIndices`は
 `state.selection.cards`の候補番号です。同時指定はできません。
 カード番号は重複せず、選択枚数のmin/maxを満たす必要があります。
+`selection.isUpgradeSelection`は強化対象の選択かを示します。
+候補の`cardDetails.state`は現在のカードの状態で、強化後のプレビューではありません。
 `state.phase=terminal`の`state.terminal`は`victory`または`death`です。
+
+`resolution.pendingEffect`はカード・束選択やカスタム報酬を待って効果が停止している状態を示します。
+ログは入力と次の観測を対応づけます。入力ごとの効果完了や親子関係は推定しません。
+終了時やreset/restore時にも`pendingEffect`を記録します。
+通常の戦闘報酬画面は、それだけでは保留された効果に数えません。
 
 ## このアドオンの制約
 
