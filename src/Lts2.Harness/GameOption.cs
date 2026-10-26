@@ -64,6 +64,9 @@ public enum OptionKind
 
     /// <summary>Switch the Crystal Sphere divination tool (Big = 3×3 area, Small = single cell).</summary>
     SetCrystalSphereTool,
+    OpenShop,
+    CloseShop,
+    LeaveShop,
 }
 
 /// <summary>
@@ -388,4 +391,13 @@ public sealed class GameOption
         Player player, MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereMinigame.CrystalSphereToolType tool) =>
         new(OptionKind.SetCrystalSphereTool, player.NetId, $"Use {tool} divination tool",
             crystalSphereTool: tool.ToString(), player: player, crystalSphereToolValue: tool);
+
+    internal static GameOption OpenShopOption(Player player) =>
+        new(OptionKind.OpenShop, player.NetId, "Open merchant inventory", player: player);
+
+    internal static GameOption CloseShopOption(Player player) =>
+        new(OptionKind.CloseShop, player.NetId, "Close merchant inventory", player: player);
+
+    internal static GameOption LeaveShopOption(Player player) =>
+        new(OptionKind.LeaveShop, player.NetId, "Leave merchant", player: player);
 }

@@ -12,8 +12,7 @@ namespace Lts2.Harness.Tests;
 /// drives this minigame through a UI screen (null headless); the harness skips that screen and
 /// surfaces the grid as <see cref="GamePhase.CrystalSphere"/> with one
 /// <see cref="OptionKind.ClickCrystalSphereCell"/> per hidden cell plus a tool toggle. These tests
-/// verify the core rule the player sees: an item only pays out when its whole footprint is uncovered
-/// — partially uncovering it does not count.
+/// verify the public grid boundary and completion without exposing hidden item placements.
 /// </summary>
 public sealed class CrystalSphereTests
 {
@@ -22,45 +21,34 @@ public sealed class CrystalSphereTests
     public CrystalSphereTests(ITestOutputHelper output) => _out = output;
 
     [Fact]
-    public void FullyUncoveringAnItem_RevealsIt_PartialDoesNot()
+    public void PublicGrid_HidesPlacements_AndTracksRealToolClicks()
     {
         GameHost host = TestNav.StartOnMap("TESTSEED");
         EnterMinigameViaPaymentPlan(host);
-
-        // Switch to the Small (single-cell) tool so we can uncover exactly the cells we choose.
+        CrystalSphereView initial = host.GetState().CrystalSphere!;
+        Assert.Empty(initial.Items);
+        Assert.Equal(initial.Width * initial.Height, initial.HiddenCells.Count + initial.RevealedCells.Count);
+        int remaining = initial.DivinationsLeft;
         host.Apply(host.ListOptions().Single(o =>
             o.Kind == OptionKind.SetCrystalSphereTool && o.CrystalSphereTool == "Small"));
-
-        CrystalSphereView view = host.GetState().CrystalSphere!;
-        _out.WriteLine($"grid {view.Width}x{view.Height} divinations={view.DivinationsLeft} tool={view.Tool} items={view.Items.Count}");
-
-        // Pick the smallest multi-cell item: small enough to fit the divination budget, but large
-        // enough that leaving one cell covered is a genuine "partial" state to test against.
-        CrystalSphereItemView target = view.Items
-            .Where(i => i.Size.Col * i.Size.Row >= 2)
-            .OrderBy(i => i.Size.Col * i.Size.Row)
-            .First();
-        _out.WriteLine($"target {target.ItemType} at ({target.Position.Col},{target.Position.Row}) size {target.Size.Col}x{target.Size.Row}");
-        Assert.False(target.Revealed, "items start fully hidden");
-
-        List<Coord> footprint = FootprintCells(target).ToList();
-        Assert.True(footprint.Count <= view.DivinationsLeft, "test needs the item to fit in the divination budget");
-
-        // Uncover all but the last cell: the item is still partially covered, so it must NOT count.
-        for (int i = 0; i < footprint.Count - 1; i++)
-        {
-            ClickCell(host, footprint[i]);
-        }
-        Assert.True(host.GetState().Phase == GamePhase.CrystalSphere, "minigame should still be in progress");
-        Assert.False(
-            CurrentItem(host, target.Position).Revealed,
-            "an item with one cell still under fog must not be revealed");
-
-        // Uncover the final cell: now the whole footprint is clear, so the item is revealed.
-        ClickCell(host, footprint[^1]);
-        Assert.True(
-            CurrentItem(host, target.Position).Revealed,
-            "an item with every cell uncovered must be revealed");
+        Assert.Equal(remaining, host.GetState().CrystalSphere!.DivinationsLeft);
+        Coord cell = initial.HiddenCells[0];
+        ClickCell(host, cell);
+        CrystalSphereView after = host.GetState().CrystalSphere!;
+        Assert.Empty(after.Items);
+        Assert.Equal(remaining - 1, after.DivinationsLeft);
+        Assert.Equal(initial.RevealedCells.Count + 1, after.RevealedCells.Count);
+        Assert.Contains(cell, after.RevealedCells);
+        Assert.DoesNotContain(cell, after.HiddenCells);
+        Assert.DoesNotContain(host.ListOptions(), o => o.CrystalSphereCell == cell);
+        host.Apply(host.ListOptions().Single(o =>
+            o.Kind == OptionKind.SetCrystalSphereTool && o.CrystalSphereTool == "Big"));
+        Coord center = after.HiddenCells.First(c => c.Col > 0 && c.Row > 0 && c.Col < after.Width - 1 && c.Row < after.Height - 1);
+        ClickCell(host, center);
+        CrystalSphereView big = host.GetState().CrystalSphere!;
+        Assert.True(big.RevealedCells.Count > after.RevealedCells.Count + 1);
+        Assert.Empty(big.Items);
+        Assert.Equal(big.Width * big.Height, big.HiddenCells.Count + big.RevealedCells.Count);
     }
 
     [Fact]
@@ -110,20 +98,6 @@ public sealed class CrystalSphereTests
 
         Assert.Equal(GamePhase.CrystalSphere, host.GetState().Phase);
     }
-
-    private static IEnumerable<Coord> FootprintCells(CrystalSphereItemView item)
-    {
-        for (int i = 0; i < item.Size.Col; i++)
-        {
-            for (int j = 0; j < item.Size.Row; j++)
-            {
-                yield return new Coord(item.Position.Col + i, item.Position.Row + j);
-            }
-        }
-    }
-
-    private static CrystalSphereItemView CurrentItem(GameHost host, Coord position) =>
-        host.GetState().CrystalSphere!.Items.Single(i => i.Position == position);
 
     private static void ClickCell(GameHost host, Coord cell) =>
         host.Apply(host.ListOptions().Single(o =>

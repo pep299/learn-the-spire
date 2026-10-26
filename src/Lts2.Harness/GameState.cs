@@ -181,7 +181,9 @@ public sealed record CrystalSphereView
     /// <summary>The cells still hidden under fog (the clickable cells).</summary>
     public required IReadOnlyList<Coord> HiddenCells { get; init; }
 
-    /// <summary>The items hidden on the grid, with their footprint and whether fully uncovered.</summary>
+    public IReadOnlyList<Coord> RevealedCells { get; init; } = System.Array.Empty<Coord>();
+
+    /// <summary>Reserved for visible item recognition; hidden placements are never projected.</summary>
     public required IReadOnlyList<CrystalSphereItemView> Items { get; init; }
 }
 
@@ -212,6 +214,7 @@ public sealed record CrystalSphereItemView
 /// </summary>
 public sealed record ShopView
 {
+    public bool InventoryOpen { get; init; } = true;
     /// <summary>The player's current gold (mirrors <see cref="PlayerState.Gold"/> for convenience).</summary>
     public required int Gold { get; init; }
 
@@ -332,6 +335,8 @@ public sealed record EventVoteView
 /// <summary>One selectable option on an event screen.</summary>
 public sealed record EventOptionView
 {
+    public bool IsProceed { get; init; }
+    public bool WillKillPlayer { get; init; }
     /// <summary>The index into the event's option list (the value passed back to resolve it).</summary>
     public required int Index { get; init; }
 

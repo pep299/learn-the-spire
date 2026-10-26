@@ -221,21 +221,20 @@ public sealed class DllRecorder:IDisposable
             pets=Items(R(pc,"Pets")).Select(p=>new{id=R(p,"CombatId"),modelId=R(p,"ModelId").ToString(),name=R(p,"Name").ToString(),hp=R(p,"CurrentHp"),maxHp=R(p,"MaxHp"),block=R(p,"Block"),powers=Powers(p)}).ToArray(),
             enemies=Enemies(combat)};
     }
-    private string Phase(GamePhase phase)=>phase switch{GamePhase.Combat=>"combat",GamePhase.Map=>"map",GamePhase.Choice=>"grid_selection",GamePhase.Event=>"event",GamePhase.Reward=>"rewards",GamePhase.Shop=>"shop",GamePhase.RestSite=>"rest",GamePhase.Treasure=>"treasure",GamePhase.GameOver=>"terminal",GamePhase.BundleChoice=>"bundle_selection",_=>"game_wait"};
+    private string Phase(GamePhase phase)=>phase switch{GamePhase.CrystalSphere=>"crystal_sphere",GamePhase.Combat=>"combat",GamePhase.Map=>"map",GamePhase.Choice=>"grid_selection",GamePhase.Event=>"event",GamePhase.Reward=>"rewards",GamePhase.Shop=>"shop",GamePhase.RestSite=>"rest",GamePhase.Treasure=>"treasure",GamePhase.GameOver=>"terminal",GamePhase.BundleChoice=>"bundle_selection",_=>"game_wait"};
     private string ActionId(GameOption option,int index)=>option.Kind switch{
         OptionKind.PlayCard=>"play:"+option.HandIndex+(option.TargetCombatId is uint target?":"+target:""),
         OptionKind.EndTurn=>"end_turn",OptionKind.MoveTo=>"map:"+option.Coord!.Value.Row+":"+option.Coord.Value.Col,
         OptionKind.ChooseEventOption=>"event:"+option.EventOptionIndex,
         _=>"dll:"+index};
     private static string ActionKind(OptionKind kind)=>kind switch{
-        OptionKind.PlayCard=>"play",OptionKind.EndTurn=>"end_turn",OptionKind.MoveTo=>"map",OptionKind.SelectCards=>"select_grid",
+        OptionKind.OpenShop=>"shop_open",OptionKind.CloseShop=>"shop_close",OptionKind.LeaveShop=>"shop_leave",OptionKind.ClickCrystalSphereCell=>"crystal_sphere_click",OptionKind.SetCrystalSphereTool=>"crystal_sphere_tool",OptionKind.PlayCard=>"play",OptionKind.EndTurn=>"end_turn",OptionKind.MoveTo=>"map",OptionKind.SelectCards=>"select_grid",
         OptionKind.ChooseEventOption=>"event",OptionKind.ChooseBundle=>"choose_bundle",OptionKind.TakeReward=>"reward",
         OptionKind.TakeCardRewardAlternative=>"reward_alternative",OptionKind.TakeTreasureRelic=>"claim_relic",OptionKind.SkipTreasure=>"skip_treasure",
         OptionKind.ChooseRestOption=>"rest",OptionKind.BuyShopItem=>"buy",OptionKind.UsePotion=>"potion",OptionKind.DiscardPotion=>"discard_potion",_=>kind.ToString()};
     public object Observe()
     {
         var host=Host??throw new InvalidOperationException("先にresetが必要");var view=host.GetState();
-        if(view.Phase==GamePhase.CrystalSphere)throw new NotSupportedException("CrystalSphereは未公開情報を含むため、この記録器では未対応として停止");
         var run=host.Run;object player=run.Players[0],creature=R(player,"Creature");var pc=P(player,"PlayerCombatState");
         var rawCombat=P(host,"Combat");bool active=rawCombat!=null&&pc!=null&&view.Phase is GamePhase.Combat or GamePhase.Choice;
         var combat=Combat(player);
@@ -245,14 +244,15 @@ public sealed class DllRecorder:IDisposable
                 cardDetails=P(option,"CardModel") is object card?Card(card):null,
                 selectedCards=Items(P(option,"SelectedCardModels")).Select(Card).ToArray(),
                 shopItemId=option.ShopItemId,shopItemType=option.ShopItemType,shopItemCost=option.ShopItemCost,
+                crystalSphereCol=option.CrystalSphereCell?.Col,crystalSphereRow=option.CrystalSphereCell?.Row,crystalSphereTool=option.CrystalSphereTool,
                 potionSlot=option.PotionSlot,potionId=option.PotionId,eventOptionIndex=option.EventOptionIndex,
                 restOptionId=option.RestOptionId,treasureRelicId=option.TreasureRelicId}}).ToList();
         if(pending!=null)actions.Add(new{id="dll:select_cards",kind="select_grid",label="候補番号の組を選択",
             detail=new{nativeOptionIndex=(int?)null,nativeKind="SelectCards",parameter="cardIndices",min=R(pending,"MinSelect"),max=R(pending,"MaxSelect"),candidateCount=Items(R(pending,"Options")).Length}});
         var offers=new List<object>();
-        if(view.Phase==GamePhase.Shop)
+        if(view.Phase==GamePhase.Shop && view.Shop!.InventoryOpen)
         {
-            var room=R(host,"CurrentMerchantRoom");var inventory=PublicData.Call(room,"GetLocalInventory")!;
+            var inventory=R(host,"CurrentShopInventory");
             int index=0;foreach(var entry in Items(R(inventory,"AllEntries")))
             {
                 var offer=PublicData.Offer(entry,index,true,false,(bool)R(player,"HasOpenPotionSlots"));offers.Add(offer);
@@ -276,12 +276,15 @@ public sealed class DllRecorder:IDisposable
             cards=Items(R(pending,"Options")).Select((card,index)=>new{index,cardDetails=Card(card)}).ToArray(),selected=(object?)null,selectedCount=(int?)null};
         var state=new{phase=Phase(view.Phase),status,turn=active?R(pc!,"TurnNumber"):null,hand,enemies=active?Enemies(rawCombat!):Array.Empty<object>(),offers,
             selection,eventId=view.Event?.EventId,options=view.Event?.Options,rewards=view.Rewards,bundles=view.BundleChoice,treasure=view.Treasure,rest=view.RestSite,
+            shop=view.Shop is {} shop?new{inventoryOpen=shop.InventoryOpen}:null,
+            crystalSphere=view.CrystalSphere is {} crystal?new{width=crystal.Width,height=crystal.Height,divinationsLeft=crystal.DivinationsLeft,tool=crystal.Tool,
+                hiddenCells=crystal.HiddenCells.Select(c=>new{col=c.Col,row=c.Row}).ToArray(),revealedCells=crystal.RevealedCells.Select(c=>new{col=c.Col,row=c.Row}).ToArray(),visibleItems=Array.Empty<object>()}:null,
             terminal=view.IsGameOver?(view.IsVictory?"victory":"death"):null};
         return new{state,actions,publicHistory=new{coverage="current_recorded_segment_only",shopOffers=offerHistory.Values.ToArray()},
             resolution=new{engineActionsInProgress=(int?)null,evidence="host_apply_returned_or_initial_boundary",pendingChoice=view.Phase==GamePhase.Choice,pendingEffect=PendingEffect},
             capabilities=new{backend="learn_dll",gameVersion="v0.111.0",actGeneration,presentationActions=false,renderedCardText=false,intentIcons=false,
                 supportedCharacters=new[]{"IRONCLAD"},supportedAscensions=new[]{0},explicitMultiCardIndices=true,drawPileIdentities=false,
-                localization="keys_or_template_fallback",unavailable=new Dictionary<string,string>()}};
+                localization="keys_or_template_fallback",unavailable=new Dictionary<string,string>{{"crystalSphereVisualItems","部分表示のアイテム型・画像は未投影。公開セルのみで、視覚情報は不完全。"}}}};
     }
     private object EmitObservation(){var observation=Observe();decisionId++;Write("observation",new{observation,coverage="unverified"});return observation;}
     public void Step(int index)
