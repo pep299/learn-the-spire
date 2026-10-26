@@ -280,8 +280,20 @@ internal static class AutoPlayer
     private static void StepShop(GameHost host)
     {
         var options = host.ListOptions();
+        GameOption? open = options.FirstOrDefault(o => o.Kind == OptionKind.OpenShop);
+        if (open is not null)
+        {
+            host.Apply(open);
+            return;
+        }
         GameOption? buy = options.FirstOrDefault(o => o.Kind == OptionKind.BuyShopItem);
-        host.Apply(buy ?? options.First(o => o.Kind == OptionKind.MoveTo));
+        if (buy is not null)
+        {
+            host.Apply(buy);
+            return;
+        }
+        GameOption? leave = options.FirstOrDefault(o => o.Kind == OptionKind.LeaveShop);
+        host.Apply(leave ?? options.First(o => o.Kind == OptionKind.MoveTo));
     }
 
     private static void StepReward(GameHost host)
