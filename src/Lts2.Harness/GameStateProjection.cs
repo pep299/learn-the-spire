@@ -45,7 +45,7 @@ internal static class GameStateProjection
             Treasure = host.HasTreasureChoice ? ProjectTreasure(host) : null,
             RestSite = host.HasRestChoice ? ProjectRestSite() : null,
             Shop = host.HasShopChoice ? ProjectShop(host) : null,
-            CrystalSphere = host.PendingCrystalSphere is { } mg ? ProjectCrystalSphere(mg) : null,
+            CrystalSphere = host.PendingCrystalSphere is { } mg ? ProjectCrystalSphere(mg, host.CrystalAssets) : null,
         };
     }
 
@@ -495,7 +495,7 @@ internal static class GameStateProjection
     }
 
     private static CrystalSphereView ProjectCrystalSphere(
-        MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereMinigame minigame)
+        MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereMinigame minigame, Sts2Recorder.CrystalSphereAssets? assets)
     {
         MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereCell[,] cells = minigame.cells;
         int width = cells.GetLength(0);
@@ -515,6 +515,7 @@ internal static class GameStateProjection
             }
         }
 
+        var visuals = Sts2Recorder.CrystalSphereProjection.Project(minigame, assets);
         return new CrystalSphereView
         {
             Width = width,
@@ -523,6 +524,9 @@ internal static class GameStateProjection
             Tool = minigame.CrystalSphereTool.ToString(),
             HiddenCells = hidden,
             RevealedCells = revealed,
+            VisibleFragments = visuals.VisibleFragments,
+            VisualTemplates = visuals.VisualTemplates,
+            VisualsUnavailable = visuals.Unavailable,
             Items = System.Array.Empty<CrystalSphereItemView>(),
         };
     }

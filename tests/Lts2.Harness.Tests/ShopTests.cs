@@ -24,6 +24,61 @@ public sealed class ShopTests
     public ShopTests(ITestOutputHelper output) => _out = output;
 
     [Fact]
+    public void Shop_RelicChildChoice_SettlesPurchaseBeforeOfferingTheShopAgain()
+    {
+        GameHost host = EnterShop("TESTSEED", gold: 999);
+        var inventory = ((MegaCrit.Sts2.Core.Rooms.MerchantRoom)host.Run.CurrentRoom!).GetLocalInventory();
+        Sts2Recorder.PublicData.Call(inventory.RelicEntries.First(), "SetModel", MegaCrit.Sts2.Core.Models.ModelDb.AllRelics
+            .Single(r => r.Id.Entry == "DOLLYS_MIRROR").ToMutable());
+        var purchase = host.ListOptions().Single(o => o.Kind == OptionKind.BuyShopItem && o.ShopItemId == "DOLLYS_MIRROR");
+        int gold = host.Run.Players[0].Gold, deck = host.Run.Players[0].Deck.Cards.Count;
+        host.Apply(purchase);
+        Assert.Equal(GamePhase.Choice, host.GetState().Phase);
+        host.Apply(host.ListOptions().First(o => o.Kind == OptionKind.SelectCards && o.SelectedCards!.Count == 1));
+        Assert.Equal(GamePhase.Shop, host.GetState().Phase);
+        Assert.Equal(gold - purchase.ShopItemCost, host.Run.Players[0].Gold);
+        Assert.Equal(deck + 1, host.Run.Players[0].Deck.Cards.Count);
+        Assert.DoesNotContain(host.ListOptions(), o => o.Kind == OptionKind.BuyShopItem && o.ShopItemId == "DOLLYS_MIRROR");
+        Assert.DoesNotContain(host.GetState().Shop!.Items, item => item.ItemId == "DOLLYS_MIRROR");
+    }
+
+    [Fact]
+    public void Shop_BundlePurchase_DoesNotWaitForTheEnclosingRoom() =>
+        PurchaseChildKeepsEnclosingRoomPending("SCROLL_BOXES", GamePhase.BundleChoice);
+
+    [Fact]
+    public void Shop_CustomRewardPurchase_DoesNotWaitForTheEnclosingRoom() =>
+        PurchaseChildKeepsEnclosingRoomPending("ORRERY", GamePhase.Reward);
+
+    private static void PurchaseChildKeepsEnclosingRoomPending(string relicId, GamePhase childPhase)
+    {
+        var host = EnterShop("TESTSEED", 999);
+        var inventory = ((MegaCrit.Sts2.Core.Rooms.MerchantRoom)host.Run.CurrentRoom!).GetLocalInventory();
+        Sts2Recorder.PublicData.Call(inventory.RelicEntries.First(), "SetModel", MegaCrit.Sts2.Core.Models.ModelDb.AllRelics
+            .Single(r => r.Id.Entry == relicId).ToMutable());
+        TestNav.AddGold(host, inventory.RelicEntries.First().Cost);
+        var purchase = host.ListOptions().Single(o => o.Kind == OptionKind.BuyShopItem && o.ShopItemId == relicId);
+        host.Apply(purchase);
+        Assert.Equal(childPhase, host.GetState().Phase);
+
+        // 店からの退出を待つ外側Taskを模擬し、購入完了と部屋完了を混同しないことを確かめる。
+        var room = new System.Threading.Tasks.TaskCompletionSource();
+        var roomField = typeof(GameHost).GetField("_suspendedRoomTask", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        Assert.Null(roomField.GetValue(host));
+        roomField.SetValue(host, room.Task);
+        try
+        {
+            host.Apply(host.ListOptions().First(o => childPhase == GamePhase.BundleChoice
+                ? o.Kind == OptionKind.ChooseBundle : o.Kind == OptionKind.ProceedFromRewards));
+            Assert.Equal(GamePhase.Shop, host.GetState().Phase);
+            Assert.DoesNotContain(host.ListOptions(), o => o.Kind == OptionKind.BuyShopItem && o.ShopItemId == relicId);
+            Assert.False(room.Task.IsCompleted);
+            Assert.Same(room.Task, roomField.GetValue(host));
+        }
+        finally { room.TrySetResult(); }
+    }
+
+    [Fact]
     public void Shop_SurfacesInventory_AndAffordableItemsBecomeOptions()
     {
         GameHost host = EnterShop("TESTSEED", gold: 999);

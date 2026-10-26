@@ -79,11 +79,8 @@ public sealed class GameHost
     // mid-effect card choice (e.g. Smith's upgrade selection) so Apply can resume it. Null otherwise.
     private System.Threading.Tasks.Task? _restChoiceTask;
 
-    // A shop card-removal purchase task, kept in flight while it suspends on the deck card choice it
-    // raises (the removal picks a card to remove), so Apply(SelectCards) can resume it. Null otherwise.
-    // The matching entry is held so the harness can mark it used on success (the UI node that would
-    // normally do that is null headless).
-    private System.Threading.Tasks.Task<bool>? _shopRemovalTask;
+    // 取得時の子選択後も在庫確定まで購入Taskを保持し、外側の部屋・イベントTaskを上書きしない。
+    private System.Threading.Tasks.Task<bool>? _shopPurchaseTask;
     private MegaCrit.Sts2.Core.Entities.Merchant.MerchantCardRemovalEntry? _shopRemovalEntry;
 
     // Custom rewards offered mid-effect by a relic/event (RewardsCmd.OfferCustom, e.g.
@@ -149,6 +146,9 @@ public sealed class GameHost
     internal static System.Action<RunState, bool>? RunEndedHook;
     private bool? _terminalVictory;
     internal bool IsVictory => _terminalVictory ?? RunManager.Instance.WinTime > 0;
+    internal Sts2Recorder.CrystalSphereAssets? CrystalAssets { get; private set; }
+    public void ConfigureCrystalAssets(string directory) => CrystalAssets = Sts2Recorder.CrystalSphereAssets.Load(directory);
+    public void ConfigureCrystalAssets(Sts2Recorder.CrystalSphereAssets? assets) => CrystalAssets = assets;
 
     // Process-wide hook the FromChooseABundleScreen Harmony patch calls; the latest run owns it.
     internal static System.Func<
@@ -512,6 +512,10 @@ public sealed class GameHost
         if (_rewardOffer?.SelectionTask is not null)
         {
             PumpRewardSelectionUntilIdleOrChoice(_rewardOffer);
+        }
+        else if (_shopPurchaseTask is not null)
+        {
+            ResumeShopPurchaseIfPending();
         }
         else if (_suspendedRoomTask is { IsCompleted: false } roomTask)
         {
@@ -1655,10 +1659,9 @@ public sealed class GameHost
                         _restChoiceTask = null;
                     }
                 }
-                else if (_shopRemovalTask is { IsCompleted: false } shopTask)
+                else if (_shopPurchaseTask is not null)
                 {
-                    PumpRoomTaskUntilIdleOrChoice(shopTask);
-                    FinishShopRemovalIfDone();
+                    ResumeShopPurchaseIfPending();
                 }
                 else if (_suspendedRoomTask is { IsCompleted: false } roomTask)
                 {
@@ -1725,6 +1728,7 @@ public sealed class GameHost
             default:
                 throw new ArgumentOutOfRangeException(nameof(option), option.Kind, "Unknown option kind.");
         }
+        if (!EffectSuspended) ResumeShopPurchaseIfPending();
     }
 
     // RewardsSetSynchronizer's select/skip have local-only public entries (SelectLocalReward /
@@ -1941,7 +1945,11 @@ public sealed class GameHost
         // is now completed, so unblock it and pump the effect to quiescence (it may finish, raise
         // another choice, or — in combat — continue the action queue).
         resolve.TrySetResult();
-        if (_suspendedRoomTask is { IsCompleted: false } roomTask)
+        if (_shopPurchaseTask is not null)
+        {
+            ResumeShopPurchaseIfPending();
+        }
+        else if (_suspendedRoomTask is { IsCompleted: false } roomTask)
         {
             // The suspended effect was a fire-and-forget room/relic task (treasure extra rewards, a
             // relic's on-obtain reward, …); resume it.
@@ -2427,10 +2435,7 @@ public sealed class GameHost
     // ---------------------------------------------------------------------------------
 
     /// <summary>
-    /// Buy the item the given option points at. Card/relic/potion purchases run the entry's purchase
-    /// task to quiescence; the card-removal service suspends on a deck card choice (resolved via
-    /// <see cref="Apply"/>'s <see cref="OptionKind.SelectCards"/> path, after which the entry is
-    /// marked used since the UI node that would normally do so is null headless).
+    /// 取得時の子選択を含む購入Taskを保持する。カード削除のみ、成功後にUI側の使用済み印も付ける。
     /// </summary>
     private void BuyShopItem(GameOption option)
     {
@@ -2438,42 +2443,33 @@ public sealed class GameHost
             ?? throw new InvalidOperationException("Buy option carried no shop entry.");
         MegaCrit.Sts2.Core.Entities.Merchant.MerchantInventory inv = InventoryFor(option.Player!);
 
-        if (entry is MegaCrit.Sts2.Core.Entities.Merchant.MerchantCardRemovalEntry removal)
-        {
-            _shopRemovalEntry = removal;
-            _shopRemovalTask = removal.OnTryPurchaseWrapper(inv);
-            PumpRoomTaskUntilIdleOrChoice(_shopRemovalTask);
-            FinishShopRemovalIfDone();
-            return;
-        }
+        if (_shopPurchaseTask is not null) throw new InvalidOperationException("A shop purchase is still resolving.");
+        _shopRemovalEntry = entry as MegaCrit.Sts2.Core.Entities.Merchant.MerchantCardRemovalEntry;
+        _shopPurchaseTask = entry.OnTryPurchaseWrapper(inv);
+        ResumeShopPurchaseIfPending();
+    }
 
-        System.Threading.Tasks.Task<bool> task = entry.OnTryPurchaseWrapper(inv);
-        PumpRoomTaskUntilIdleOrChoice(task);
-        // Card/relic/potion purchases resolve through the action queue (no card choice), so the task
-        // is complete here; surface any failure rather than silently swallowing it.
-        if (task.IsCompleted && !task.GetAwaiter().GetResult())
-        {
-            throw new InvalidOperationException($"Shop purchase was rejected: {option.Description}");
-        }
+    private void ResumeShopPurchaseIfPending()
+    {
+        if (_shopPurchaseTask is not { } purchase) return;
+        PumpRoomTaskUntilIdleOrChoice(purchase);
+        FinishShopPurchaseIfDone();
     }
 
     /// <summary>
-    /// If the in-flight card-removal purchase has completed, clear the tracking state and — on a
-    /// successful removal — mark the entry used (single-use per shop), reproducing the logic half of
-    /// <c>NMerchantCardRemoval.OnCardRemovalUsed</c>.
+    /// 購入結果を確定し、カード削除の成功時には<c>NMerchantCardRemoval.OnCardRemovalUsed</c>の使用済み処理も行う。
     /// </summary>
-    private void FinishShopRemovalIfDone()
+    private void FinishShopPurchaseIfDone()
     {
-        if (_shopRemovalTask is not { IsCompleted: true } task)
+        if (_shopPurchaseTask is not { IsCompleted: true } task)
         {
             return;
         }
-        if (task.GetAwaiter().GetResult())
-        {
-            _shopRemovalEntry?.SetUsed();
-        }
-        _shopRemovalTask = null;
+        bool purchased = task.GetAwaiter().GetResult();
+        if (purchased) _shopRemovalEntry?.SetUsed();
+        _shopPurchaseTask = null;
         _shopRemovalEntry = null;
+        if (!purchased) throw new InvalidOperationException("Shop purchase was rejected.");
     }
 
     // ---------------------------------------------------------------------------------

@@ -1,9 +1,17 @@
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Godot;
 
 public static class StringExtensions
 {
+    public static string ToSnakeCase(this string text)
+    {
+        string words = Regex.Replace(text, "([A-Z])([A-Z][a-z])", "$1_$2");
+        words = Regex.Replace(words, "([a-z0-9])([A-Z])", "$1_$2");
+        return words.Replace(' ', '_').Replace('-', '_').ToLowerInvariant();
+    }
+
     public static string PathJoin(this string path, string file)
     {
         if (path.Length == 0) return file;

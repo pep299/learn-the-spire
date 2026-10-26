@@ -9,6 +9,7 @@
   <!-- The GodotSharp shim must win over any other GodotSharp resolution. -->
   <ItemGroup>
     <ProjectReference Include="..\Lts2.GodotShim\Lts2.GodotShim.csproj" />
+    <Compile Include="../../addons/public-observation/shared/CrystalSphereProjection.cs" Link="Public/CrystalSphereProjection.cs" />
   </ItemGroup>
 
 </Project>

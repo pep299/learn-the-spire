@@ -182,6 +182,10 @@ public sealed record CrystalSphereView
     public required IReadOnlyList<Coord> HiddenCells { get; init; }
 
     public IReadOnlyList<Coord> RevealedCells { get; init; } = System.Array.Empty<Coord>();
+    public IReadOnlyList<Sts2Recorder.CrystalSphereFragment> VisibleFragments { get; init; } = System.Array.Empty<Sts2Recorder.CrystalSphereFragment>();
+    public IReadOnlyList<Sts2Recorder.CrystalSphereTemplate> VisualTemplates { get; init; } = System.Array.Empty<Sts2Recorder.CrystalSphereTemplate>();
+    public string? VisualsUnavailable { get; init; }
+    public string VisualRepresentation => Sts2Recorder.CrystalSphereProjection.Representation;
 
     /// <summary>Reserved for visible item recognition; hidden placements are never projected.</summary>
     public required IReadOnlyList<CrystalSphereItemView> Items { get; init; }
