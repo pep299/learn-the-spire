@@ -243,6 +243,8 @@ public sealed class DllRecorder:IDisposable
             detail=new{nativeOptionIndex=index,nativeKind=option.Kind.ToString(),handIndex=option.HandIndex,target=option.TargetCombatId,card=option.Card?.CardId,
                 cardDetails=P(option,"CardModel") is object card?Card(card):null,
                 selectedCards=Items(P(option,"SelectedCardModels")).Select(Card).ToArray(),
+                bundleIndex=option.BundleIndex,bundleCards=option.BundleIndex is int bundleIndex?Items(Items(R(host,"PendingBundles"))[bundleIndex]).Select(Card).ToArray():null,
+                relicId=P(P(option,"Reward"),"Relic") is {} rewardRelic?PublicData.Id(rewardRelic):null,
                 shopItemId=option.ShopItemId,shopItemType=option.ShopItemType,shopItemCost=option.ShopItemCost,
                 crystalSphereCol=option.CrystalSphereCell?.Col,crystalSphereRow=option.CrystalSphereCell?.Row,crystalSphereTool=option.CrystalSphereTool,
                 potionSlot=option.PotionSlot,potionId=option.PotionId,eventOptionIndex=option.EventOptionIndex,

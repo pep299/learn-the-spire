@@ -929,8 +929,9 @@ public sealed class GameHost
     {
         MegaCrit.Sts2.Core.Models.PotionModel potion = option.PotionModel
             ?? throw new InvalidOperationException("Use-potion option carried no potion.");
+        bool crystalAlreadyPending = CrystalSpherePending;
         potion.EnqueueManualUse(option.Target);
-        PumpCombatUntilIdleOrChoice();
+        PumpCombatUntilIdleOrChoice(crystalAlreadyPending: crystalAlreadyPending);
         TryOfferCombatRewards();
     }
 
@@ -1102,7 +1103,9 @@ public sealed class GameHost
         // items' rewards surface through the normal custom-reward screen).
         if (PendingCrystalSphere is { } minigame)
         {
-            return BuildCrystalSphereOptions(player, minigame);
+            var crystalOptions = new List<GameOption>(BuildCrystalSphereOptions(player, minigame));
+            AddPotionOptions(player, crystalOptions);
+            return crystalOptions;
         }
 
         // The post-combat rewards screen: take rewards then proceed back to the map. The options are
@@ -2554,11 +2557,14 @@ public sealed class GameHost
     /// choice. The effect runs on a thread-pool continuation, so we wait on whichever happens
     /// first: the queue-drained task or the selector's pending-choice signal.
     /// </summary>
-    private CombatPumpResult PumpCombatUntilIdleOrChoice(int timeoutMs = 10000)
+    private CombatPumpResult PumpCombatUntilIdleOrChoice(int timeoutMs = 10000, bool crystalAlreadyPending = false)
     {
         System.Threading.Tasks.Task drain = RunManager.Instance.ActionExecutor.FinishedExecutingActions();
+        var signals = new List<System.Threading.Tasks.Task>
+            { drain, Selector.PendingSignal, CustomRewardSignal, BundleSignal };
+        if (!crystalAlreadyPending) signals.Add(CrystalSphereSignal);
         int idx = System.Threading.Tasks.Task.WaitAny(
-            new[] { drain, Selector.PendingSignal, CustomRewardSignal, CrystalSphereSignal, BundleSignal }, timeoutMs);
+            signals.ToArray(), timeoutMs);
         if (idx < 0)
         {
             throw new System.TimeoutException(

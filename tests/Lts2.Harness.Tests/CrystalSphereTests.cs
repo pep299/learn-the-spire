@@ -79,6 +79,31 @@ public sealed class CrystalSphereTests
         Assert.True(player.Relics.Count >= relicsBefore, "relic count should not regress through the minigame");
     }
 
+    [Fact]
+    public void PublicMinigame_AllowsAnyTimePotionAndDiscard_WithoutSpendingDivinations()
+    {
+        using var errors = new LogErrorSink();
+        var host = TestNav.StartOnMap("TESTSEED");
+        TestNav.SetHp(host, maxHp: 80, currentHp: 40);
+        TestNav.GivePotion(host, "BloodPotion");
+        TestNav.GivePotion(host, "BlockPotion");
+        EnterMinigameViaPaymentPlan(host);
+        var before = host.GetState().CrystalSphere!;
+        Assert.DoesNotContain(host.ListOptions(), o => o.Kind == OptionKind.UsePotion && o.PotionId == "BLOCK_POTION");
+        host.Apply(host.ListOptions().Single(o => o.Kind == OptionKind.UsePotion && o.PotionId == "BLOOD_POTION"));
+        var healed = host.GetState();
+        Assert.Equal(56, healed.Players[0].CurrentHp);
+        Assert.DoesNotContain("BLOOD_POTION", healed.Players[0].Potions);
+        host.Apply(host.ListOptions().Single(o => o.Kind == OptionKind.DiscardPotion && o.PotionId == "BLOCK_POTION"));
+        var after = host.GetState();
+        Assert.DoesNotContain("BLOCK_POTION", after.Players[0].Potions);
+        Assert.Equal(GamePhase.CrystalSphere, after.Phase);
+        Assert.Equal(before.DivinationsLeft, after.CrystalSphere!.DivinationsLeft);
+        Assert.Equal(before.HiddenCells, after.CrystalSphere.HiddenCells);
+        Assert.Equal(before.RevealedCells, after.CrystalSphere.RevealedCells);
+        Assert.Empty(errors.Errors);
+    }
+
     /// <summary>
     /// Resolve the run to the Crystal Sphere event's PaymentPlan option, which (unlike UncoverFuture)
     /// needs no gold — it adds a Debt curse — and then opens the minigame.
