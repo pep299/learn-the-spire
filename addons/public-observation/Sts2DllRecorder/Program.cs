@@ -243,7 +243,7 @@ public sealed class DllRecorder:IDisposable
             detail=new{nativeOptionIndex=index,nativeKind=option.Kind.ToString(),handIndex=option.HandIndex,target=option.TargetCombatId,card=option.Card?.CardId,
                 cardDetails=P(option,"CardModel") is object card?Card(card):null,
                 selectedCards=Items(P(option,"SelectedCardModels")).Select(Card).ToArray(),
-                bundleIndex=option.BundleIndex,bundleCards=option.BundleIndex is int bundleIndex?Items(Items(R(host,"PendingBundles"))[bundleIndex]).Select(Card).ToArray():null,
+                bundleIndex=option.BundleIndex,rewardType=P(option,"Reward")?.GetType().Name,
                 relicId=P(P(option,"Reward"),"Relic") is {} rewardRelic?PublicData.Id(rewardRelic):null,
                 shopItemId=option.ShopItemId,shopItemType=option.ShopItemType,shopItemCost=option.ShopItemCost,
                 crystalSphereCol=option.CrystalSphereCell?.Col,crystalSphereRow=option.CrystalSphereCell?.Row,crystalSphereTool=option.CrystalSphereTool,
@@ -276,8 +276,9 @@ public sealed class DllRecorder:IDisposable
             room=new{type=P(run,"CurrentRoom")?.GetType().Name,id=P(P(run,"CurrentRoom"),"ModelId")?.ToString()}};
         var selection=pending==null?null:new{min=R(pending,"MinSelect"),max=R(pending,"MaxSelect"),isUpgradeSelection=R(pending,"IsUpgradeSelection"),
             cards=Items(R(pending,"Options")).Select((card,index)=>new{index,cardDetails=Card(card)}).ToArray(),selected=(object?)null,selectedCount=(int?)null};
+        var bundles=P(host,"PendingBundles") is {} pendingBundles?Items(pendingBundles).Select(bundle=>Items(bundle).Select(Card).ToArray()).ToArray():null;
         var state=new{phase=Phase(view.Phase),status,turn=active?R(pc!,"TurnNumber"):null,hand,enemies=active?Enemies(rawCombat!):Array.Empty<object>(),offers,
-            selection,eventId=view.Event?.EventId,options=view.Event?.Options,rewards=view.Rewards,bundles=view.BundleChoice,treasure=view.Treasure,rest=view.RestSite,
+            selection,eventId=view.Event?.EventId,options=view.Event?.Options,rewards=view.Rewards,bundles,treasure=view.Treasure,rest=view.RestSite,
             shop=view.Shop is {} shop?new{inventoryOpen=shop.InventoryOpen}:null,
             crystalSphere=view.CrystalSphere is {} crystal?new{width=crystal.Width,height=crystal.Height,divinationsLeft=crystal.DivinationsLeft,tool=crystal.Tool,
                 hiddenCells=crystal.HiddenCells.Select(c=>new{col=c.Col,row=c.Row}).ToArray(),revealedCells=crystal.RevealedCells}:null,
