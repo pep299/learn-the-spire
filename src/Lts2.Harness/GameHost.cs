@@ -146,9 +146,6 @@ public sealed class GameHost
     internal static System.Action<RunState, bool>? RunEndedHook;
     private bool? _terminalVictory;
     internal bool IsVictory => _terminalVictory ?? RunManager.Instance.WinTime > 0;
-    internal Sts2Recorder.CrystalSphereAssets? CrystalAssets { get; private set; }
-    public void ConfigureCrystalAssets(string directory) => CrystalAssets = Sts2Recorder.CrystalSphereAssets.Load(directory);
-    public void ConfigureCrystalAssets(Sts2Recorder.CrystalSphereAssets? assets) => CrystalAssets = assets;
 
     // Process-wide hook the FromChooseABundleScreen Harmony patch calls; the latest run owns it.
     internal static System.Func<

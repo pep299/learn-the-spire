@@ -883,6 +883,7 @@ internal static class BoardRenderer
             return;
         }
         var hidden = cs.HiddenCells.ToHashSet();
+        var revealed = cs.RevealedCells.ToDictionary(cell => new Coord(cell.Col, cell.Row), cell => cell.Content);
         lines.Add(new Line().Add("CRYSTAL SPHERE", Theme.Teal)
             .Dim($"   divinations {cs.DivinationsLeft} · tool {cs.Tool}"));
         for (int y = 0; y < cs.Height; y++)
@@ -890,18 +891,23 @@ internal static class BoardRenderer
             var l = new Line().T("  ");
             for (int x = 0; x < cs.Width; x++)
             {
-                bool h = hidden.Contains(new Coord(x, y));
-                l.Add(h ? "▓ " : "· ", h ? Theme.Dim : Theme.Teal);
+                var coord = new Coord(x, y);
+                if (hidden.Contains(coord)) l.Add("▓ ", Theme.Dim);
+                else
+                {
+                    string content = revealed[coord];
+                    string glyph = content switch
+                    {
+                        "empty" => "· ", "gold" => "G ", "potion" => "P ",
+                        "card_reward" => "C ", "relic" => "R ", "curse" => "! ",
+                        _ => throw new InvalidOperationException("Unknown Crystal cell content")
+                    };
+                    l.Add(glyph, content == "curse" ? Theme.Red : Theme.Teal);
+                }
             }
             lines.Add(l);
         }
-        foreach (CrystalSphereItemView it in cs.Items)
-        {
-            lines.Add(new Line()
-                .Add(it.IsGood ? "  + " : "  - ", it.IsGood ? Theme.Green : Theme.Red)
-                .T(it.ItemType + " ")
-                .Add(it.Revealed ? "revealed" : "hidden", it.Revealed ? Theme.Green : Theme.Dim));
-        }
+        lines.Add(new Line().Dim("  G gold · P potion · C card reward · R relic · ! curse"));
     }
 
     private static void GameOver(GameState state, List<Line> lines)

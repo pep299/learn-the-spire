@@ -26,7 +26,6 @@ public sealed class CrystalSphereTests
         GameHost host = TestNav.StartOnMap("TESTSEED");
         EnterMinigameViaPaymentPlan(host);
         CrystalSphereView initial = host.GetState().CrystalSphere!;
-        Assert.Empty(initial.Items);
         Assert.Equal(initial.Width * initial.Height, initial.HiddenCells.Count + initial.RevealedCells.Count);
         int remaining = initial.DivinationsLeft;
         host.Apply(host.ListOptions().Single(o =>
@@ -35,10 +34,9 @@ public sealed class CrystalSphereTests
         Coord cell = initial.HiddenCells[0];
         ClickCell(host, cell);
         CrystalSphereView after = host.GetState().CrystalSphere!;
-        Assert.Empty(after.Items);
         Assert.Equal(remaining - 1, after.DivinationsLeft);
         Assert.Equal(initial.RevealedCells.Count + 1, after.RevealedCells.Count);
-        Assert.Contains(cell, after.RevealedCells);
+        Assert.Contains(after.RevealedCells, c => c.Col == cell.Col && c.Row == cell.Row);
         Assert.DoesNotContain(cell, after.HiddenCells);
         Assert.DoesNotContain(host.ListOptions(), o => o.CrystalSphereCell == cell);
         host.Apply(host.ListOptions().Single(o =>
@@ -47,7 +45,6 @@ public sealed class CrystalSphereTests
         ClickCell(host, center);
         CrystalSphereView big = host.GetState().CrystalSphere!;
         Assert.True(big.RevealedCells.Count > after.RevealedCells.Count + 1);
-        Assert.Empty(big.Items);
         Assert.Equal(big.Width * big.Height, big.HiddenCells.Count + big.RevealedCells.Count);
     }
 

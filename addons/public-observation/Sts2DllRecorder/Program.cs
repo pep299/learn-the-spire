@@ -30,7 +30,6 @@ var logPath=Arg("--log");
 if(logPath.Length==0){Console.Error.WriteLine("--log <新しいJSONLファイル> [--self-test-one-turn] [--seed DLLLOG1]");return 2;}
 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(logPath))!);
 using var recorder=new DllRecorder(logPath);
-if(Arg("--crystal-assets") is { Length: > 0 } crystalAssets)recorder.ConfigureCrystalAssets(crystalAssets);
 try
 {
     if(args.Contains("--verify-shop-projection"))
@@ -124,12 +123,6 @@ public sealed class DllRecorder:IDisposable
     private readonly string session="dll-"+DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmssfffZ");
     private readonly CardProjection cards=new();
     private readonly Dictionary<string,object> offerHistory=new(StringComparer.Ordinal);
-    private CrystalSphereAssets? crystalAssets;
-    public void ConfigureCrystalAssets(string directory)
-    {
-        crystalAssets=CrystalSphereAssets.Load(directory);
-        Host?.ConfigureCrystalAssets(crystalAssets);
-    }
     private string? root;
     private long eventSequence,actionSequence,decisionId;
     public GameHost? Host{get;private set;}
@@ -164,7 +157,6 @@ public sealed class DllRecorder:IDisposable
         GameRuntime.EnsureInitialized();
         actGeneration=mode;
         Host=GameHost.StartNewRun(seed,new[]{MegaCrit.Sts2.Core.Models.ModelDb.AllCharacters.First(c=>c.Id.Entry=="IRONCLAD")},0,seededActs);Host.EnterFirstRoom();
-        Host.ConfigureCrystalAssets(crystalAssets);
         StartSegment(seed,"new_segment",null);
     }
     public void RestoreFile(string path,string seed)
@@ -183,7 +175,6 @@ public sealed class DllRecorder:IDisposable
         string hash=Convert.ToHexString(SHA256.HashData(saveBytes)).ToLowerInvariant();
         if(Host!=null)Write("continuity_boundary",new{reason="restore",pendingEffect=PendingEffect});
         Host=GameHost.RestoreFromJson(json,seed);actGeneration="saved_state";
-        Host.ConfigureCrystalAssets(crystalAssets);
         StartSegment(seed,"restored_segment",hash);
     }
     private void StartSegment(string seed,string continuity,string? sourceSaveSha256)
@@ -289,15 +280,13 @@ public sealed class DllRecorder:IDisposable
             selection,eventId=view.Event?.EventId,options=view.Event?.Options,rewards=view.Rewards,bundles=view.BundleChoice,treasure=view.Treasure,rest=view.RestSite,
             shop=view.Shop is {} shop?new{inventoryOpen=shop.InventoryOpen}:null,
             crystalSphere=view.CrystalSphere is {} crystal?new{width=crystal.Width,height=crystal.Height,divinationsLeft=crystal.DivinationsLeft,tool=crystal.Tool,
-                hiddenCells=crystal.HiddenCells.Select(c=>new{col=c.Col,row=c.Row}).ToArray(),revealedCells=crystal.RevealedCells.Select(c=>new{col=c.Col,row=c.Row}).ToArray(),
-                visibleItems=Array.Empty<object>(),visibleFragments=crystal.VisibleFragments,visualTemplates=crystal.VisualTemplates,visualRepresentation=crystal.VisualRepresentation}:null,
+                hiddenCells=crystal.HiddenCells.Select(c=>new{col=c.Col,row=c.Row}).ToArray(),revealedCells=crystal.RevealedCells}:null,
             terminal=view.IsGameOver?(view.IsVictory?"victory":"death"):null};
         return new{state,actions,publicHistory=new{coverage="current_recorded_segment_only",shopOffers=offerHistory.Values.ToArray()},
             resolution=new{engineActionsInProgress=(int?)null,evidence="host_apply_returned_or_initial_boundary",pendingChoice=view.Phase==GamePhase.Choice,pendingEffect=PendingEffect},
             capabilities=new{backend="learn_dll",gameVersion="v0.111.0",actGeneration,presentationActions=false,renderedCardText=false,intentIcons=false,
                 supportedCharacters=new[]{"IRONCLAD"},supportedAscensions=new[]{0},explicitMultiCardIndices=true,drawPileIdentities=false,
-                localization="keys_or_template_fallback",unavailable=view.CrystalSphere?.VisualsUnavailable is {} unavailable
-                    ? new Dictionary<string,string>{{"crystalSphereVisualItems",unavailable}} : new Dictionary<string,string>()}};
+                localization="keys_or_template_fallback",unavailable=new Dictionary<string,string>()}};
     }
     private object EmitObservation(){var observation=Observe();decisionId++;Write("observation",new{observation,coverage="unverified"});return observation;}
     public void Step(int index)

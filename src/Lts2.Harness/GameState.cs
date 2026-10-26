@@ -181,33 +181,7 @@ public sealed record CrystalSphereView
     /// <summary>The cells still hidden under fog (the clickable cells).</summary>
     public required IReadOnlyList<Coord> HiddenCells { get; init; }
 
-    public IReadOnlyList<Coord> RevealedCells { get; init; } = System.Array.Empty<Coord>();
-    public IReadOnlyList<Sts2Recorder.CrystalSphereFragment> VisibleFragments { get; init; } = System.Array.Empty<Sts2Recorder.CrystalSphereFragment>();
-    public IReadOnlyList<Sts2Recorder.CrystalSphereTemplate> VisualTemplates { get; init; } = System.Array.Empty<Sts2Recorder.CrystalSphereTemplate>();
-    public string? VisualsUnavailable { get; init; }
-    public string VisualRepresentation => Sts2Recorder.CrystalSphereProjection.Representation;
-
-    /// <summary>Reserved for visible item recognition; hidden placements are never projected.</summary>
-    public required IReadOnlyList<CrystalSphereItemView> Items { get; init; }
-}
-
-/// <summary>One item hidden on the Crystal Sphere grid.</summary>
-public sealed record CrystalSphereItemView
-{
-    /// <summary>The item kind (e.g. "CardReward", "Relic", "Potion", "Gold", "Curse").</summary>
-    public required string ItemType { get; init; }
-
-    /// <summary>True for beneficial items; false for the curse.</summary>
-    public required bool IsGood { get; init; }
-
-    /// <summary>The top-left cell of the item's footprint.</summary>
-    public required Coord Position { get; init; }
-
-    /// <summary>The item's footprint size (columns, rows).</summary>
-    public required Coord Size { get; init; }
-
-    /// <summary>True once every cell of the footprint is uncovered (the reward is earned).</summary>
-    public required bool Revealed { get; init; }
+    public IReadOnlyList<Sts2Recorder.CrystalSphereRevealedCell> RevealedCells { get; init; } = System.Array.Empty<Sts2Recorder.CrystalSphereRevealedCell>();
 }
 
 /// <summary>

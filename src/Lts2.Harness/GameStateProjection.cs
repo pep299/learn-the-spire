@@ -45,7 +45,7 @@ internal static class GameStateProjection
             Treasure = host.HasTreasureChoice ? ProjectTreasure(host) : null,
             RestSite = host.HasRestChoice ? ProjectRestSite() : null,
             Shop = host.HasShopChoice ? ProjectShop(host) : null,
-            CrystalSphere = host.PendingCrystalSphere is { } mg ? ProjectCrystalSphere(mg, host.CrystalAssets) : null,
+            CrystalSphere = host.PendingCrystalSphere is { } mg ? ProjectCrystalSphere(mg) : null,
         };
     }
 
@@ -495,14 +495,13 @@ internal static class GameStateProjection
     }
 
     private static CrystalSphereView ProjectCrystalSphere(
-        MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereMinigame minigame, Sts2Recorder.CrystalSphereAssets? assets)
+        MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereMinigame minigame)
     {
         MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereCell[,] cells = minigame.cells;
         int width = cells.GetLength(0);
         int height = cells.GetLength(1);
 
         var hidden = new List<Coord>();
-        var revealed = new List<Coord>();
         for (int x = 0; x < width; x++)
         {
             for (int y = 0; y < height; y++)
@@ -511,11 +510,9 @@ internal static class GameStateProjection
                 {
                     hidden.Add(new Coord(x, y));
                 }
-                else revealed.Add(new Coord(x, y));
             }
         }
 
-        var visuals = Sts2Recorder.CrystalSphereProjection.Project(minigame, assets);
         return new CrystalSphereView
         {
             Width = width,
@@ -523,11 +520,7 @@ internal static class GameStateProjection
             DivinationsLeft = minigame.DivinationCount,
             Tool = minigame.CrystalSphereTool.ToString(),
             HiddenCells = hidden,
-            RevealedCells = revealed,
-            VisibleFragments = visuals.VisibleFragments,
-            VisualTemplates = visuals.VisualTemplates,
-            VisualsUnavailable = visuals.Unavailable,
-            Items = System.Array.Empty<CrystalSphereItemView>(),
+            RevealedCells = Sts2Recorder.CrystalSphereProjection.Project(minigame),
         };
     }
 
