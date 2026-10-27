@@ -181,8 +181,10 @@ public sealed record CrystalSphereView
     /// <summary>The cells still hidden under fog (the clickable cells).</summary>
     public required IReadOnlyList<Coord> HiddenCells { get; init; }
 
-    public IReadOnlyList<Sts2Recorder.CrystalSphereRevealedCell> RevealedCells { get; init; } = System.Array.Empty<Sts2Recorder.CrystalSphereRevealedCell>();
+    public IReadOnlyList<CrystalSphereRevealedCell> RevealedCells { get; init; } = System.Array.Empty<CrystalSphereRevealedCell>();
 }
+
+public sealed record CrystalSphereRevealedCell(int Col, int Row, string Content);
 
 /// <summary>
 /// A merchant shop's inventory: the cards, relics and potions on offer, plus the card-removal

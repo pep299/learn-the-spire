@@ -5,6 +5,7 @@ using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereItems;
 using MegaCrit.Sts2.Core.Map;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.MonsterMoves.Intents;
@@ -502,6 +503,7 @@ internal static class GameStateProjection
         int height = cells.GetLength(1);
 
         var hidden = new List<Coord>();
+        var revealed = new List<CrystalSphereRevealedCell>();
         for (int x = 0; x < width; x++)
         {
             for (int y = 0; y < height; y++)
@@ -509,7 +511,19 @@ internal static class GameStateProjection
                 if (cells[x, y].IsHidden)
                 {
                     hidden.Add(new Coord(x, y));
+                    continue;
                 }
+                string content = cells[x, y].Item switch
+                {
+                    null => "empty",
+                    CrystalSphereGold => "gold",
+                    CrystalSpherePotion => "potion",
+                    CrystalSphereCardReward => "card_reward",
+                    CrystalSphereRelic => "relic",
+                    CrystalSphereCurse => "curse",
+                    _ => throw new NotSupportedException("Crystalの公開セルに未対応の内容がある")
+                };
+                revealed.Add(new CrystalSphereRevealedCell(x, y, content));
             }
         }
 
@@ -520,7 +534,7 @@ internal static class GameStateProjection
             DivinationsLeft = minigame.DivinationCount,
             Tool = minigame.CrystalSphereTool.ToString(),
             HiddenCells = hidden,
-            RevealedCells = Sts2Recorder.CrystalSphereProjection.Project(minigame),
+            RevealedCells = revealed,
         };
     }
 
