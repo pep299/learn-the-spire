@@ -79,11 +79,8 @@ public sealed class GameHost
     // mid-effect card choice (e.g. Smith's upgrade selection) so Apply can resume it. Null otherwise.
     private System.Threading.Tasks.Task? _restChoiceTask;
 
-    // A shop card-removal purchase task, kept in flight while it suspends on the deck card choice it
-    // raises (the removal picks a card to remove), so Apply(SelectCards) can resume it. Null otherwise.
-    // The matching entry is held so the harness can mark it used on success (the UI node that would
-    // normally do that is null headless).
-    private System.Threading.Tasks.Task<bool>? _shopRemovalTask;
+    // 取得時の子選択後も在庫確定まで購入Taskを保持し、外側の部屋・イベントTaskを上書きしない。
+    private System.Threading.Tasks.Task<bool>? _shopPurchaseTask;
     private MegaCrit.Sts2.Core.Entities.Merchant.MerchantCardRemovalEntry? _shopRemovalEntry;
 
     // Custom rewards offered mid-effect by a relic/event (RewardsCmd.OfferCustom, e.g.
@@ -143,6 +140,12 @@ public sealed class GameHost
     // Process-wide hook the ShowScreen Harmony patch calls; the latest run owns it (like testSelector).
     internal static System.Action<MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereMinigame>?
         CrystalSphereScreenHook;
+
+    internal static System.Func<MegaCrit.Sts2.Core.Models.Potions.FoulPotion, bool?>? FakeMerchantPotionUsabilityHook;
+    internal static System.Func<MegaCrit.Sts2.Core.Models.Potions.FoulPotion, System.Threading.Tasks.Task?>? FakeMerchantPotionUseHook;
+    internal static System.Action<RunState, bool>? RunEndedHook;
+    private bool? _terminalVictory;
+    internal bool IsVictory => _terminalVictory ?? RunManager.Instance.WinTime > 0;
 
     // Process-wide hook the FromChooseABundleScreen Harmony patch calls; the latest run owns it.
     internal static System.Func<
@@ -297,6 +300,12 @@ public sealed class GameHost
         // Intercept the Crystal Sphere event minigame's UI screen (null headless) so its grid
         // surfaces as agent choices instead. Process-wide; the latest run owns it.
         CrystalSphereScreenHook = host.OnCrystalSphereScreenShown;
+        FakeMerchantPotionUsabilityHook = host.FakeMerchantPotionUsability;
+        FakeMerchantPotionUseHook = host.UseFakeMerchantPotion;
+        RunEndedHook = (endedRun, won) =>
+        {
+            if (ReferenceEquals(endedRun, host.Run)) host._terminalVictory ??= won;
+        };
 
         // Intercept the "choose a bundle" screen (ScrollBoxes), which is null headless and otherwise
         // auto-takes bundles[0] under TestMode. Process-wide; the latest run owns it.
@@ -501,6 +510,10 @@ public sealed class GameHost
         {
             PumpRewardSelectionUntilIdleOrChoice(_rewardOffer);
         }
+        else if (_shopPurchaseTask is not null)
+        {
+            ResumeShopPurchaseIfPending();
+        }
         else if (_suspendedRoomTask is { IsCompleted: false } roomTask)
         {
             PumpRoomTaskUntilIdleOrChoice(roomTask);
@@ -681,13 +694,17 @@ public sealed class GameHost
     internal MegaCrit.Sts2.Core.Models.EventModel? CurrentEventForPlayer(Player player) =>
         InEventRoom ? RunManager.Instance.EventSynchronizer.GetEventForPlayer(player) : null;
 
-    private static bool EventIsActionable(MegaCrit.Sts2.Core.Models.EventModel? e) =>
-        e is not null && e.CurrentOptions.Any(o => !o.IsLocked && !o.IsProceed);
+    internal static bool IsSelectableEventOption(
+        MegaCrit.Sts2.Core.Models.EventModel ev, MegaCrit.Sts2.Core.Events.EventOption option, Player player) =>
+        !option.IsLocked && (!option.IsProceed || option.WillKillPlayer?.Invoke(player) == true
+            || ev is MegaCrit.Sts2.Core.Models.Events.TheArchitect);
+
+    private static bool EventIsActionable(MegaCrit.Sts2.Core.Models.EventModel? e, Player player) =>
+        e is not null && e.CurrentOptions.Any(o => IsSelectableEventOption(e, o, player));
 
     /// <summary>
-    /// True when *any* player's event is awaiting a real (non-proceed, unlocked) choice — so the run
-    /// is still in an actionable event room. A finished event — or one down to only a "proceed"
-    /// option — is not actionable: the party leaves by moving on the map.
+    /// True when any player's event has a selectable choice. Terminal presentation-only Proceed
+    /// options are omitted; lethal choices and the Architect's victory choice remain selectable.
     /// </summary>
     internal bool HasActionableEvent =>
         InEventRoom && Run.Players.Any(HasActionableEventForPlayer);
@@ -701,7 +718,7 @@ public sealed class GameHost
     internal bool HasActionableEventForPlayer(Player player)
     {
         MegaCrit.Sts2.Core.Models.EventModel? e = CurrentEventForPlayer(player);
-        if (!EventIsActionable(e))
+        if (!EventIsActionable(e, player))
         {
             return false;
         }
@@ -788,13 +805,52 @@ public sealed class GameHost
             ? Run.CurrentRoom as MegaCrit.Sts2.Core.Rooms.MerchantRoom
             : null;
 
+    private MegaCrit.Sts2.Core.Models.Events.FakeMerchant? _shopEvent;
+    private bool _fakeInventoryOpen;
+    private bool _fakeMerchantLeft;
+
+    private MegaCrit.Sts2.Core.Models.Events.FakeMerchant? CurrentFakeMerchant
+    {
+        get
+        {
+            var merchant = CurrentEvent as MegaCrit.Sts2.Core.Models.Events.FakeMerchant;
+            if (!ReferenceEquals(merchant, _shopEvent))
+            {
+                _shopEvent = merchant;
+                _fakeInventoryOpen = false;
+                _fakeMerchantLeft = false;
+            }
+            return merchant is { StartedFight: false } && !_fakeMerchantLeft ? merchant : null;
+        }
+    }
+
+    internal bool ShopInventoryOpen => CurrentMerchantRoom is not null
+        || (CurrentFakeMerchant is not null && _fakeInventoryOpen);
+
+    internal MegaCrit.Sts2.Core.Entities.Merchant.MerchantInventory? CurrentShopInventory =>
+        CurrentMerchantRoom?.GetLocalInventory() ?? CurrentFakeMerchant?.Inventory;
+
+    private bool? FakeMerchantPotionUsability(MegaCrit.Sts2.Core.Models.Potions.FoulPotion potion) =>
+        CurrentFakeMerchant is { } merchant && ReferenceEquals(merchant.Owner, potion.Owner)
+            ? !_fakeInventoryOpen : null;
+
+    private System.Threading.Tasks.Task? UseFakeMerchantPotion(MegaCrit.Sts2.Core.Models.Potions.FoulPotion potion)
+    {
+        var merchant = CurrentFakeMerchant;
+        if (merchant is null || _fakeInventoryOpen || !ReferenceEquals(merchant.Owner, potion.Owner))
+        {
+            return null;
+        }
+        return merchant.FoulPotionThrown(potion);
+    }
+
     /// <summary>
     /// True while standing in a merchant shop and able to act on it. A shop is never "consumed":
     /// the player can keep buying affordable items or leave by moving on the map, so this stays
     /// true for the whole visit (unless a reward/card choice is mid-resolution).
     /// </summary>
     internal bool HasShopChoice =>
-        CurrentMerchantRoom is not null
+        CurrentShopInventory is not null
         && PendingRewards is null
         && Selector.Pending is null;
 
@@ -874,8 +930,9 @@ public sealed class GameHost
     {
         MegaCrit.Sts2.Core.Models.PotionModel potion = option.PotionModel
             ?? throw new InvalidOperationException("Use-potion option carried no potion.");
+        bool crystalAlreadyPending = CrystalSpherePending;
         potion.EnqueueManualUse(option.Target);
-        PumpCombatUntilIdleOrChoice();
+        PumpCombatUntilIdleOrChoice(crystalAlreadyPending: crystalAlreadyPending);
         TryOfferCombatRewards();
     }
 
@@ -1047,7 +1104,9 @@ public sealed class GameHost
         // items' rewards surface through the normal custom-reward screen).
         if (PendingCrystalSphere is { } minigame)
         {
-            return BuildCrystalSphereOptions(player, minigame);
+            var crystalOptions = new List<GameOption>(BuildCrystalSphereOptions(player, minigame));
+            AddPotionOptions(player, crystalOptions);
+            return crystalOptions;
         }
 
         // The post-combat rewards screen: take rewards then proceed back to the map. The options are
@@ -1342,7 +1401,7 @@ public sealed class GameHost
     }
 
     /// <summary>
-    /// Build the options for an event room: one per unlocked, non-proceed event option, in the
+    /// Build the options for an event room: one per selectable event option, in the
     /// event's own option order (the index is preserved so <see cref="Apply"/> can resolve it
     /// against the game's <c>EventSynchronizer.ChooseLocalOption</c> seam).
     /// </summary>
@@ -1353,15 +1412,7 @@ public sealed class GameHost
         for (int i = 0; i < current.Count; i++)
         {
             MegaCrit.Sts2.Core.Events.EventOption opt = current[i];
-            if (opt.IsLocked || opt.IsProceed)
-            {
-                continue;
-            }
-            // The game hides an option that would kill you (the button is disabled by
-            // NEventOptionButton, and the AutoSlay AI filters it in EventRoomHandler) via the option's
-            // WillKillPlayer predicate — e.g. a "lose N HP" choice when you have ≤ N HP. That gating is
-            // UI/AI-side, so enforce it here too: a self-inflicted event choice must never kill you.
-            if (opt.WillKillPlayer is { } willKill && willKill(player))
+            if (!IsSelectableEventOption(ev, opt, player))
             {
                 continue;
             }
@@ -1418,11 +1469,21 @@ public sealed class GameHost
     /// </summary>
     /// <summary>The given player's own merchant inventory (each player shops their own stock/gold).</summary>
     private MegaCrit.Sts2.Core.Entities.Merchant.MerchantInventory InventoryFor(Player player) =>
-        CurrentMerchantRoom!.Inventories[Run.GetPlayerSlotIndex(player)];
+        CurrentMerchantRoom is { } room ? room.Inventories[Run.GetPlayerSlotIndex(player)]
+            : CurrentFakeMerchant is { } merchant && ReferenceEquals(merchant.Owner, player)
+                ? merchant.Inventory : throw new InvalidOperationException("No merchant inventory for this player.");
 
     private IReadOnlyList<GameOption> BuildShopOptions(Player player)
     {
         var options = new List<GameOption>();
+        var fakeMerchant = CurrentFakeMerchant;
+        if (fakeMerchant is not null && !_fakeInventoryOpen)
+        {
+            options.Add(GameOption.OpenShopOption(player));
+            options.Add(GameOption.LeaveShopOption(player));
+            AddPotionOptions(player, options);
+            return options;
+        }
         MegaCrit.Sts2.Core.Entities.Merchant.MerchantInventory inv = InventoryFor(player);
         foreach (MegaCrit.Sts2.Core.Entities.Merchant.MerchantEntry entry in inv.AllEntries)
         {
@@ -1441,10 +1502,17 @@ public sealed class GameHost
             options.Add(GameOption.BuyShopItemOption(player, entry, type, id, view));
         }
 
-        // The shop is left by moving on the map (there is no separate proceed step headless).
-        foreach (MegaCrit.Sts2.Core.Map.MapPoint point in GameStateProjection.ReachablePoints(Run))
+        if (fakeMerchant is not null)
         {
-            options.Add(GameOption.MoveToOption(player, point.coord));
+            options.Add(GameOption.CloseShopOption(player));
+            options.Add(GameOption.LeaveShopOption(player));
+        }
+        else
+        {
+            foreach (MegaCrit.Sts2.Core.Map.MapPoint point in GameStateProjection.ReachablePoints(Run))
+            {
+                options.Add(GameOption.MoveToOption(player, point.coord));
+            }
         }
         AddPotionOptions(player, options);
         return options;
@@ -1588,10 +1656,9 @@ public sealed class GameHost
                         _restChoiceTask = null;
                     }
                 }
-                else if (_shopRemovalTask is { IsCompleted: false } shopTask)
+                else if (_shopPurchaseTask is not null)
                 {
-                    PumpRoomTaskUntilIdleOrChoice(shopTask);
-                    FinishShopRemovalIfDone();
+                    ResumeShopPurchaseIfPending();
                 }
                 else if (_suspendedRoomTask is { IsCompleted: false } roomTask)
                 {
@@ -1647,9 +1714,18 @@ public sealed class GameHost
             case OptionKind.SetCrystalSphereTool:
                 SetCrystalSphereTool(option.CrystalSphereToolValue!.Value);
                 break;
+            case OptionKind.OpenShop:
+            case OptionKind.CloseShop:
+            case OptionKind.LeaveShop:
+                if (CurrentFakeMerchant is null)
+                    throw new InvalidOperationException("Fake merchant presentation is not active.");
+                _fakeInventoryOpen = option.Kind == OptionKind.OpenShop;
+                _fakeMerchantLeft = option.Kind == OptionKind.LeaveShop;
+                break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(option), option.Kind, "Unknown option kind.");
         }
+        if (!EffectSuspended) ResumeShopPurchaseIfPending();
     }
 
     // RewardsSetSynchronizer's select/skip have local-only public entries (SelectLocalReward /
@@ -1866,7 +1942,11 @@ public sealed class GameHost
         // is now completed, so unblock it and pump the effect to quiescence (it may finish, raise
         // another choice, or — in combat — continue the action queue).
         resolve.TrySetResult();
-        if (_suspendedRoomTask is { IsCompleted: false } roomTask)
+        if (_shopPurchaseTask is not null)
+        {
+            ResumeShopPurchaseIfPending();
+        }
+        else if (_suspendedRoomTask is { IsCompleted: false } roomTask)
         {
             // The suspended effect was a fire-and-forget room/relic task (treasure extra rewards, a
             // relic's on-obtain reward, …); resume it.
@@ -1952,9 +2032,7 @@ public sealed class GameHost
     }
 
     /// <summary>
-    /// Block until the run reaches its terminal game-over state. Used after the Architect victory
-    /// event's proceed votes to win the run: that runs on a fire-and-forget task chain
-    /// (EnterNextAct → WinRun → kill all players), so we drain and poll until every player is dead.
+    /// Wait for the game's asynchronous win/abandon path to finish killing the players.
     /// </summary>
     private void WaitForGameOver(int timeoutMs = 10000)
     {
@@ -1969,7 +2047,7 @@ public sealed class GameHost
             if (sw.ElapsedMilliseconds > timeoutMs)
             {
                 throw new System.TimeoutException(
-                    "Timed out waiting for the run to end after the Architect victory.");
+                    "Timed out waiting for the event's terminal game action.");
             }
             System.Threading.Thread.Sleep(5);
         }
@@ -1989,22 +2067,17 @@ public sealed class GameHost
     /// </summary>
     private void ApplyEventOption(Player player, int index)
     {
-        // The Architect victory event ends the run: its final option votes to move to the next act,
-        // which (in the final act's victory room) wins the run and kills all players. That vote — and
-        // only that option, not the dialogue advances before it — bumps the act-floor counter (see
-        // ActChangeSynchronizer.MoveToNextAct), so a change here flags the run-ending choice.
-        int actFloorBefore = Run.ActFloor;
-
+        var ev = CurrentEventForPlayer(player);
+        var chosen = ev?.CurrentOptions[index];
+        bool confirmedAbandon = ev is MegaCrit.Sts2.Core.Models.Events.Trial
+            && chosen!.TextKey == "TRIAL.pages.REJECT.options.DOUBLE_DOWN";
+        bool architect = ev is MegaCrit.Sts2.Core.Models.Events.TheArchitect && chosen!.TextKey == "PROCEED";
         ChooseEventOptionForPlayer(player, index);
         PumpEventUntilIdleOrChoice();
         // The option may have entered and resolved a combat (shared events); offer its rewards.
         TryOfferCombatRewards();
 
-        // If this option triggered the act-change vote in the Architect's victory room, the win runs
-        // on a fire-and-forget task chain (EnterNextAct → WinRun → kill all players); pump until the
-        // run reaches its terminal game-over state.
-        if (Run.ActFloor != actFloorBefore
-            && Run.CurrentRoom is { IsVictoryRoom: true } && !Run.IsGameOver)
+        if (!Run.IsGameOver && (architect || confirmedAbandon))
         {
             WaitForGameOver();
         }
@@ -2359,10 +2432,7 @@ public sealed class GameHost
     // ---------------------------------------------------------------------------------
 
     /// <summary>
-    /// Buy the item the given option points at. Card/relic/potion purchases run the entry's purchase
-    /// task to quiescence; the card-removal service suspends on a deck card choice (resolved via
-    /// <see cref="Apply"/>'s <see cref="OptionKind.SelectCards"/> path, after which the entry is
-    /// marked used since the UI node that would normally do so is null headless).
+    /// 取得時の子選択を含む購入Taskを保持する。カード削除のみ、成功後にUI側の使用済み印も付ける。
     /// </summary>
     private void BuyShopItem(GameOption option)
     {
@@ -2370,42 +2440,33 @@ public sealed class GameHost
             ?? throw new InvalidOperationException("Buy option carried no shop entry.");
         MegaCrit.Sts2.Core.Entities.Merchant.MerchantInventory inv = InventoryFor(option.Player!);
 
-        if (entry is MegaCrit.Sts2.Core.Entities.Merchant.MerchantCardRemovalEntry removal)
-        {
-            _shopRemovalEntry = removal;
-            _shopRemovalTask = removal.OnTryPurchaseWrapper(inv);
-            PumpRoomTaskUntilIdleOrChoice(_shopRemovalTask);
-            FinishShopRemovalIfDone();
-            return;
-        }
+        if (_shopPurchaseTask is not null) throw new InvalidOperationException("A shop purchase is still resolving.");
+        _shopRemovalEntry = entry as MegaCrit.Sts2.Core.Entities.Merchant.MerchantCardRemovalEntry;
+        _shopPurchaseTask = entry.OnTryPurchaseWrapper(inv);
+        ResumeShopPurchaseIfPending();
+    }
 
-        System.Threading.Tasks.Task<bool> task = entry.OnTryPurchaseWrapper(inv);
-        PumpRoomTaskUntilIdleOrChoice(task);
-        // Card/relic/potion purchases resolve through the action queue (no card choice), so the task
-        // is complete here; surface any failure rather than silently swallowing it.
-        if (task.IsCompleted && !task.GetAwaiter().GetResult())
-        {
-            throw new InvalidOperationException($"Shop purchase was rejected: {option.Description}");
-        }
+    private void ResumeShopPurchaseIfPending()
+    {
+        if (_shopPurchaseTask is not { } purchase) return;
+        PumpRoomTaskUntilIdleOrChoice(purchase);
+        FinishShopPurchaseIfDone();
     }
 
     /// <summary>
-    /// If the in-flight card-removal purchase has completed, clear the tracking state and — on a
-    /// successful removal — mark the entry used (single-use per shop), reproducing the logic half of
-    /// <c>NMerchantCardRemoval.OnCardRemovalUsed</c>.
+    /// 購入結果を確定し、カード削除の成功時には<c>NMerchantCardRemoval.OnCardRemovalUsed</c>の使用済み処理も行う。
     /// </summary>
-    private void FinishShopRemovalIfDone()
+    private void FinishShopPurchaseIfDone()
     {
-        if (_shopRemovalTask is not { IsCompleted: true } task)
+        if (_shopPurchaseTask is not { IsCompleted: true } task)
         {
             return;
         }
-        if (task.GetAwaiter().GetResult())
-        {
-            _shopRemovalEntry?.SetUsed();
-        }
-        _shopRemovalTask = null;
+        bool purchased = task.GetAwaiter().GetResult();
+        if (purchased) _shopRemovalEntry?.SetUsed();
+        _shopPurchaseTask = null;
         _shopRemovalEntry = null;
+        if (!purchased) throw new InvalidOperationException("Shop purchase was rejected.");
     }
 
     // ---------------------------------------------------------------------------------
@@ -2489,11 +2550,14 @@ public sealed class GameHost
     /// choice. The effect runs on a thread-pool continuation, so we wait on whichever happens
     /// first: the queue-drained task or the selector's pending-choice signal.
     /// </summary>
-    private CombatPumpResult PumpCombatUntilIdleOrChoice(int timeoutMs = 10000)
+    private CombatPumpResult PumpCombatUntilIdleOrChoice(int timeoutMs = 10000, bool crystalAlreadyPending = false)
     {
         System.Threading.Tasks.Task drain = RunManager.Instance.ActionExecutor.FinishedExecutingActions();
+        var signals = new List<System.Threading.Tasks.Task>
+            { drain, Selector.PendingSignal, CustomRewardSignal, BundleSignal };
+        if (!crystalAlreadyPending) signals.Add(CrystalSphereSignal);
         int idx = System.Threading.Tasks.Task.WaitAny(
-            new[] { drain, Selector.PendingSignal, CustomRewardSignal, CrystalSphereSignal, BundleSignal }, timeoutMs);
+            signals.ToArray(), timeoutMs);
         if (idx < 0)
         {
             throw new System.TimeoutException(

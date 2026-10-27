@@ -18,6 +18,8 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Compile Include="../../addons/public-observation/shared/PublicData.cs" Link="Recorder/PublicData.cs" />
+    <Compile Include="../../addons/public-observation/shared/CardProjection.cs" Link="Recorder/CardProjection.cs" />
   </ItemGroup>
 
   <ItemGroup>

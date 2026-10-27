@@ -20,12 +20,11 @@ from ..policies import heuristic
 
 
 def choose_action(state: dict[str, Any], options: list[dict[str, Any]]) -> int:
-    """Pick an action index from the policy's ranking, falling back to option 0."""
+    """Prefer the policy ranking; skip inventory closing in the unscored fallback."""
     ranking = heuristic.policy(state, options)
     if ranking:
         return max(ranking, key=lambda pair: pair[1])[0]
-    # Out of combat the heuristic declines; take the first legal option to keep the run moving.
-    return 0
+    return next((index for index, option in enumerate(options) if option.get("kind") != "CloseShop"), 0)
 
 
 def run_episode(env: Lts2Env, seed: str, max_steps: int = 2000) -> tuple[float, int]:

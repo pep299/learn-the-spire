@@ -1,5 +1,9 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent;
+using MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereItems;
+using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Models;
 using Lts2.Harness;
 using Xunit;
@@ -12,8 +16,7 @@ namespace Lts2.Harness.Tests;
 /// drives this minigame through a UI screen (null headless); the harness skips that screen and
 /// surfaces the grid as <see cref="GamePhase.CrystalSphere"/> with one
 /// <see cref="OptionKind.ClickCrystalSphereCell"/> per hidden cell plus a tool toggle. These tests
-/// verify the core rule the player sees: an item only pays out when its whole footprint is uncovered
-/// — partially uncovering it does not count.
+/// verify the public grid boundary and completion without exposing hidden item placements.
 /// </summary>
 public sealed class CrystalSphereTests
 {
@@ -22,73 +25,100 @@ public sealed class CrystalSphereTests
     public CrystalSphereTests(ITestOutputHelper output) => _out = output;
 
     [Fact]
-    public void FullyUncoveringAnItem_RevealsIt_PartialDoesNot()
+    public void PublicGrid_HidesPlacements_AndTracksRealToolClicks()
     {
         GameHost host = TestNav.StartOnMap("TESTSEED");
         EnterMinigameViaPaymentPlan(host);
-
-        // Switch to the Small (single-cell) tool so we can uncover exactly the cells we choose.
+        CrystalSphereView initial = host.GetState().CrystalSphere!;
+        Assert.Equal(initial.Width * initial.Height, initial.HiddenCells.Count + initial.RevealedCells.Count);
+        int remaining = initial.DivinationsLeft;
         host.Apply(host.ListOptions().Single(o =>
             o.Kind == OptionKind.SetCrystalSphereTool && o.CrystalSphereTool == "Small"));
-
-        CrystalSphereView view = host.GetState().CrystalSphere!;
-        _out.WriteLine($"grid {view.Width}x{view.Height} divinations={view.DivinationsLeft} tool={view.Tool} items={view.Items.Count}");
-
-        // Pick the smallest multi-cell item: small enough to fit the divination budget, but large
-        // enough that leaving one cell covered is a genuine "partial" state to test against.
-        CrystalSphereItemView target = view.Items
-            .Where(i => i.Size.Col * i.Size.Row >= 2)
-            .OrderBy(i => i.Size.Col * i.Size.Row)
-            .First();
-        _out.WriteLine($"target {target.ItemType} at ({target.Position.Col},{target.Position.Row}) size {target.Size.Col}x{target.Size.Row}");
-        Assert.False(target.Revealed, "items start fully hidden");
-
-        List<Coord> footprint = FootprintCells(target).ToList();
-        Assert.True(footprint.Count <= view.DivinationsLeft, "test needs the item to fit in the divination budget");
-
-        // Uncover all but the last cell: the item is still partially covered, so it must NOT count.
-        for (int i = 0; i < footprint.Count - 1; i++)
-        {
-            ClickCell(host, footprint[i]);
-        }
-        Assert.True(host.GetState().Phase == GamePhase.CrystalSphere, "minigame should still be in progress");
-        Assert.False(
-            CurrentItem(host, target.Position).Revealed,
-            "an item with one cell still under fog must not be revealed");
-
-        // Uncover the final cell: now the whole footprint is clear, so the item is revealed.
-        ClickCell(host, footprint[^1]);
-        Assert.True(
-            CurrentItem(host, target.Position).Revealed,
-            "an item with every cell uncovered must be revealed");
+        Assert.Equal(remaining, host.GetState().CrystalSphere!.DivinationsLeft);
+        Coord cell = initial.HiddenCells[0];
+        ClickCell(host, cell);
+        CrystalSphereView after = host.GetState().CrystalSphere!;
+        Assert.Equal(remaining - 1, after.DivinationsLeft);
+        Assert.Equal(initial.RevealedCells.Count + 1, after.RevealedCells.Count);
+        Assert.Contains(after.RevealedCells, c => c.Col == cell.Col && c.Row == cell.Row);
+        Assert.DoesNotContain(cell, after.HiddenCells);
+        Assert.DoesNotContain(host.ListOptions(), o => o.CrystalSphereCell == cell);
+        host.Apply(host.ListOptions().Single(o =>
+            o.Kind == OptionKind.SetCrystalSphereTool && o.CrystalSphereTool == "Big"));
+        Coord center = after.HiddenCells.First(c => c.Col > 0 && c.Row > 0 && c.Col < after.Width - 1 && c.Row < after.Height - 1);
+        ClickCell(host, center);
+        CrystalSphereView big = host.GetState().CrystalSphere!;
+        Assert.True(big.RevealedCells.Count > after.RevealedCells.Count + 1);
+        Assert.Equal(big.Width * big.Height, big.HiddenCells.Count + big.RevealedCells.Count);
     }
 
-    [Fact]
-    public void PlayingTheMinigameOut_GrantsRewardsForRevealedItems_AndReturnsToTheMap()
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(true, 30)]
+    public void BigGold_PaysExactlyThirtyOnlyWhenFullyUncovered_AndReturnsToTheMap(bool complete, int expectedGold)
     {
+        using var errors = new LogErrorSink();
         GameHost host = TestNav.StartOnMap("TESTSEED");
-        int relicsBefore = host.GetState().Players[0].Relics.Count;
-        int deckBefore = host.GetState().Players[0].Deck.Count;
         EnterMinigameViaPaymentPlan(host);
+        int goldBefore = host.Run.Players[0].Gold;
+        var board = (CrystalSphereMinigame)typeof(GameHost).GetProperty("PendingCrystalSphere",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(host)!;
+        // 固定操作を作るfixtureだけが配置を参照する。クリックは公開候補を通す。
+        var gold = board.Items.OfType<CrystalSphereGold>().First(item => item.Size.X == 2);
+        host.Apply(host.ListOptions().Single(o =>
+            o.Kind == OptionKind.SetCrystalSphereTool && o.CrystalSphereTool == "Small"));
+        ClickCell(host, new Coord(gold.Position.X, gold.Position.Y));
+        Assert.Equal(goldBefore, host.Run.Players[0].Gold);
+        if (complete) ClickCell(host, new Coord(gold.Position.X + 1, gold.Position.Y));
 
-        // Greedily spend every divination uncovering items, then take the rewards the revealed items
-        // pay out (which surface through the normal custom-reward screen) until back on the map.
+        int remaining = host.GetState().CrystalSphere!.DivinationsLeft;
+        for (int step = 0; step < remaining; step++)
+        {
+            Coord empty = host.GetState().CrystalSphere!.HiddenCells
+                .First(cell => board.cells[cell.Col, cell.Row].Item is null);
+            ClickCell(host, empty);
+        }
+        if (complete)
+        {
+            Assert.Equal(GamePhase.Reward, host.GetState().Phase);
+            var reward = Assert.Single(host.GetState().Rewards!.Rewards);
+            Assert.Equal(RewardType.Gold, reward.Type);
+            Assert.Equal(expectedGold, reward.Gold);
+        }
         GameState end = AutoPlayer.Advance(
             host,
             stop: s => s.Phase == GamePhase.Map || s.Phase == GamePhase.GameOver,
-            maxSteps: 200,
+            maxSteps: 20,
             log: _out);
-
-        PlayerState player = end.Players[0];
-        _out.WriteLine($"ended phase={end.Phase} gold={player.Gold} relics={player.Relics.Count} deck={player.Deck.Count}");
-
         Assert.Equal(GamePhase.Map, end.Phase);
         Assert.Null(end.CrystalSphere);
-        // PaymentPlan adds a curse to the deck, so the deck must have grown (plus any card the greedy
-        // play uncovered and took) — evidence the minigame resolved and paid out through to the map.
-        Assert.True(player.Deck.Count > deckBefore,
-            $"expected the deck to grow (curse + any revealed card) but it went {deckBefore} -> {player.Deck.Count}");
-        Assert.True(player.Relics.Count >= relicsBefore, "relic count should not regress through the minigame");
+        Assert.Equal(goldBefore + expectedGold, end.Players[0].Gold);
+        Assert.Empty(errors.Errors);
+    }
+
+    [Fact]
+    public void PublicMinigame_AllowsAnyTimePotionAndDiscard_WithoutSpendingDivinations()
+    {
+        using var errors = new LogErrorSink();
+        var host = TestNav.StartOnMap("TESTSEED");
+        TestNav.SetHp(host, maxHp: 80, currentHp: 40);
+        TestNav.GivePotion(host, "BloodPotion");
+        TestNav.GivePotion(host, "BlockPotion");
+        EnterMinigameViaPaymentPlan(host);
+        var before = host.GetState().CrystalSphere!;
+        Assert.DoesNotContain(host.ListOptions(), o => o.Kind == OptionKind.UsePotion && o.PotionId == "BLOCK_POTION");
+        host.Apply(host.ListOptions().Single(o => o.Kind == OptionKind.UsePotion && o.PotionId == "BLOOD_POTION"));
+        var healed = host.GetState();
+        Assert.Equal(56, healed.Players[0].CurrentHp);
+        Assert.DoesNotContain("BLOOD_POTION", healed.Players[0].Potions);
+        host.Apply(host.ListOptions().Single(o => o.Kind == OptionKind.DiscardPotion && o.PotionId == "BLOCK_POTION"));
+        var after = host.GetState();
+        Assert.DoesNotContain("BLOCK_POTION", after.Players[0].Potions);
+        Assert.Equal(GamePhase.CrystalSphere, after.Phase);
+        Assert.Equal(before.DivinationsLeft, after.CrystalSphere!.DivinationsLeft);
+        Assert.Equal(before.HiddenCells, after.CrystalSphere.HiddenCells);
+        Assert.Equal(before.RevealedCells, after.CrystalSphere.RevealedCells);
+        Assert.Empty(errors.Errors);
     }
 
     /// <summary>
@@ -110,20 +140,6 @@ public sealed class CrystalSphereTests
 
         Assert.Equal(GamePhase.CrystalSphere, host.GetState().Phase);
     }
-
-    private static IEnumerable<Coord> FootprintCells(CrystalSphereItemView item)
-    {
-        for (int i = 0; i < item.Size.Col; i++)
-        {
-            for (int j = 0; j < item.Size.Row; j++)
-            {
-                yield return new Coord(item.Position.Col + i, item.Position.Row + j);
-            }
-        }
-    }
-
-    private static CrystalSphereItemView CurrentItem(GameHost host, Coord position) =>
-        host.GetState().CrystalSphere!.Items.Single(i => i.Position == position);
 
     private static void ClickCell(GameHost host, Coord cell) =>
         host.Apply(host.ListOptions().Single(o =>

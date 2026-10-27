@@ -5,6 +5,7 @@ using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereItems;
 using MegaCrit.Sts2.Core.Map;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.MonsterMoves.Intents;
@@ -33,8 +34,8 @@ internal static class GameStateProjection
             Floor = run.TotalFloor,
             AscensionLevel = run.AscensionLevel,
             IsGameOver = run.IsGameOver,
-            IsVictory = run.IsGameOver && RunManager.Instance.WinTime > 0,
-            Score = ScoreUtility.CalculateScore(run, won: RunManager.Instance.WinTime > 0),
+            IsVictory = run.IsGameOver && host.IsVictory,
+            Score = ScoreUtility.CalculateScore(run, won: host.IsVictory),
             Players = run.Players.Select(p => ProjectPlayer(p, combat)).ToList(),
             Combat = combat is null ? null : ProjectCombat(combat),
             Map = ProjectMap(run),
@@ -355,7 +356,7 @@ internal static class GameStateProjection
         for (int i = 0; i < current.Count; i++)
         {
             MegaCrit.Sts2.Core.Events.EventOption opt = current[i];
-            if (opt.IsLocked || opt.IsProceed)
+            if (!GameHost.IsSelectableEventOption(ev, opt, run.Players[0]))
             {
                 continue;
             }
@@ -366,6 +367,8 @@ internal static class GameStateProjection
                 Title = RenderEventLoc(ev, opt.Title),
                 Description = RenderEventLoc(ev, opt.Description),
                 RelicId = opt.Relic?.Id.Entry,
+                IsProceed = opt.IsProceed,
+                WillKillPlayer = opt.WillKillPlayer?.Invoke(run.Players[0]) == true,
             });
         }
 
@@ -500,6 +503,7 @@ internal static class GameStateProjection
         int height = cells.GetLength(1);
 
         var hidden = new List<Coord>();
+        var revealed = new List<CrystalSphereRevealedCell>();
         for (int x = 0; x < width; x++)
         {
             for (int y = 0; y < height; y++)
@@ -507,18 +511,21 @@ internal static class GameStateProjection
                 if (cells[x, y].IsHidden)
                 {
                     hidden.Add(new Coord(x, y));
+                    continue;
                 }
+                string content = cells[x, y].Item switch
+                {
+                    null => "empty",
+                    CrystalSphereGold => "gold",
+                    CrystalSpherePotion => "potion",
+                    CrystalSphereCardReward => "card_reward",
+                    CrystalSphereRelic => "relic",
+                    CrystalSphereCurse => "curse",
+                    _ => throw new NotSupportedException("Crystalの公開セルに未対応の内容がある")
+                };
+                revealed.Add(new CrystalSphereRevealedCell(x, y, content));
             }
         }
-
-        var items = minigame.Items.Select(item => new CrystalSphereItemView
-        {
-            ItemType = item.GetType().Name.Replace("CrystalSphere", string.Empty),
-            IsGood = item.IsGood,
-            Position = new Coord(item.Position.X, item.Position.Y),
-            Size = new Coord(item.Size.X, item.Size.Y),
-            Revealed = IsItemFullyRevealed(cells, item),
-        }).ToList();
 
         return new CrystalSphereView
         {
@@ -527,32 +534,15 @@ internal static class GameStateProjection
             DivinationsLeft = minigame.DivinationCount,
             Tool = minigame.CrystalSphereTool.ToString(),
             HiddenCells = hidden,
-            Items = items,
+            RevealedCells = revealed,
         };
-    }
-
-    private static bool IsItemFullyRevealed(
-        MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereCell[,] cells,
-        MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereItem item)
-    {
-        for (int i = 0; i < item.Size.X; i++)
-        {
-            for (int j = 0; j < item.Size.Y; j++)
-            {
-                if (cells[item.Position.X + i, item.Position.Y + j].IsHidden)
-                {
-                    return false;
-                }
-            }
-        }
-        return true;
     }
 
     private static ShopView ProjectShop(GameHost host)
     {
-        MegaCrit.Sts2.Core.Entities.Merchant.MerchantInventory inv = host.CurrentMerchantRoom!.GetLocalInventory();
+        MegaCrit.Sts2.Core.Entities.Merchant.MerchantInventory inv = host.CurrentShopInventory!;
         var items = new List<ShopItemView>();
-        foreach (MegaCrit.Sts2.Core.Entities.Merchant.MerchantEntry entry in inv.AllEntries)
+        if (host.ShopInventoryOpen) foreach (MegaCrit.Sts2.Core.Entities.Merchant.MerchantEntry entry in inv.AllEntries)
         {
             if (!entry.IsStocked)
             {
@@ -568,7 +558,7 @@ internal static class GameStateProjection
                 Card = card is null ? null : ProjectCard(card, canPlay: false),
             });
         }
-        return new ShopView { Gold = host.Run.Players[0].Gold, Items = items };
+        return new ShopView { Gold = host.Run.Players[0].Gold, Items = items, InventoryOpen = host.ShopInventoryOpen };
     }
 
     private static RestSiteView ProjectRestSite()

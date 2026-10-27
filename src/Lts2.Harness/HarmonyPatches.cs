@@ -137,6 +137,16 @@ internal static class HarmonyPatches
                 prefix: new HarmonyMethod(typeof(HarmonyPatches), nameof(SkipVoidPrefix)));
 
             ApplyTrialEventPatches(harmony);
+            StripCosmeticUi(harmony, typeof(MegaCrit.Sts2.Core.Runs.RunManager), "AbandonInternal");
+            harmony.Patch(
+                AccessTools.Method(typeof(MegaCrit.Sts2.Core.Runs.RunManager), "OnEnded"),
+                postfix: new HarmonyMethod(typeof(HarmonyPatches), nameof(RunEndedPostfix)));
+            harmony.Patch(
+                AccessTools.PropertyGetter(typeof(MegaCrit.Sts2.Core.Models.Potions.FoulPotion), "PassesCustomUsabilityCheck"),
+                prefix: new HarmonyMethod(typeof(HarmonyPatches), nameof(FakeMerchantPotionUsabilityPrefix)));
+            harmony.Patch(
+                AccessTools.Method(typeof(MegaCrit.Sts2.Core.Models.Potions.FoulPotion), "OnUse"),
+                prefix: new HarmonyMethod(typeof(HarmonyPatches), nameof(FakeMerchantPotionUsePrefix)));
 
             // NAudioManager.Instance is NGame.Instance?.AudioManager — null headless. SfxCmd guards
             // its audio calls on NonInteractiveMode, but a handful of sites dereference the singleton
@@ -152,6 +162,30 @@ internal static class HarmonyPatches
 
             _applied = true;
         }
+    }
+
+    private static bool FakeMerchantPotionUsabilityPrefix(
+        MegaCrit.Sts2.Core.Models.Potions.FoulPotion __instance, ref bool __result)
+    {
+        bool? usable = GameHost.FakeMerchantPotionUsabilityHook?.Invoke(__instance);
+        if (!usable.HasValue) return true;
+        __result = usable.Value;
+        return false;
+    }
+
+    private static readonly PropertyInfo RunStateProperty =
+        AccessTools.Property(typeof(MegaCrit.Sts2.Core.Runs.RunManager), "State");
+
+    private static void RunEndedPostfix(MegaCrit.Sts2.Core.Runs.RunManager __instance, bool __0) =>
+        GameHost.RunEndedHook?.Invoke((MegaCrit.Sts2.Core.Runs.RunState)RunStateProperty.GetValue(__instance)!, __0);
+
+    private static bool FakeMerchantPotionUsePrefix(
+        MegaCrit.Sts2.Core.Models.Potions.FoulPotion __instance, ref Task __result)
+    {
+        Task? use = GameHost.FakeMerchantPotionUseHook?.Invoke(__instance);
+        if (use is null) return true;
+        __result = use;
+        return false;
     }
 
     // The KaiserCrab boss (Crusher) reaches into a UI background node for all its visuals: its
@@ -284,6 +318,8 @@ internal static class HarmonyPatches
         AccessTools.Method(typeof(MegaCrit.Sts2.Core.Audio.Debug.NDebugAudioManager), "Stop"),
         AccessTools.Method(typeof(MegaCrit.Sts2.Core.Audio.Debug.NDebugAudioManager), "StopAll"),
         AccessTools.Method(typeof(NGame), nameof(NGame.ScreenRumble)),
+        AccessTools.Method(typeof(MegaCrit.Sts2.Core.Nodes.Screens.Capstones.NCapstoneContainer), "Close"),
+        AccessTools.Method(typeof(MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen), "Close", new[] { typeof(bool) }),
     };
 
     // Patch the compiler-generated MoveNext of each named async option method (matched by name
@@ -356,6 +392,9 @@ internal static class HarmonyPatches
     private static void ApplyTrialEventPatches(Harmony harmony)
     {
         harmony.Patch(
+            AccessTools.Method(typeof(Trial), "DoubleDown"),
+            prefix: new HarmonyMethod(typeof(HarmonyPatches), nameof(ConfirmTrialAbandonPrefix)));
+        harmony.Patch(
             AccessTools.PropertyGetter(typeof(MegaCrit.Sts2.Core.Nodes.Rooms.NEventRoom), "Instance"),
             prefix: new HarmonyMethod(typeof(HarmonyPatches), nameof(EventRoomInstancePrefix)));
         harmony.Patch(
@@ -373,6 +412,13 @@ internal static class HarmonyPatches
         harmony.Patch(
             AccessTools.Method(typeof(MegaCrit.Sts2.Core.Models.Events.Trial), "AddVfxAnchoredToPortrait"),
             prefix: new HarmonyMethod(typeof(HarmonyPatches), nameof(SkipVoidPrefix)));
+    }
+
+    private static bool ConfirmTrialAbandonPrefix(ref Task __result)
+    {
+        MegaCrit.Sts2.Core.Runs.RunManager.Instance.Abandon();
+        __result = Task.CompletedTask;
+        return false;
     }
 
     private static bool EventRoomInstancePrefix(ref MegaCrit.Sts2.Core.Nodes.Rooms.NEventRoom __result)

@@ -16,9 +16,8 @@ namespace Lts2.Harness.Tests;
 
 /// <summary>
 /// Defeat and health-reducing events: dying ends the run and leaves no legal action (bar the menu),
-/// exactly-lethal damage counts as death, and a self-inflicted event choice may never reduce you to
-/// 0 HP or below (the game gates such options via <c>EventOption.WillKillPlayer</c>, which is only
-/// enforced UI/AI-side, so the harness must enforce it too).
+/// exactly-lethal damage counts as death. Lethal event choices remain public, carrying the game
+/// warning so the policy can distinguish them without changing the available action space.
 /// </summary>
 public sealed class DefeatTests
 {
@@ -89,15 +88,13 @@ public sealed class DefeatTests
     [Theory]
     [InlineData("DollRoom")]
     [InlineData("SlipperyBridge")]
-    public async Task Event_NeverOffersAChoiceThatWouldKillYou(string eventName)
+    public async Task Event_ExposesLethalChoice_WithWarningAndRealDeath(string eventName)
     {
         await Task.Run(() => RunEventInvariant(eventName)).WaitAsync(TimeSpan.FromSeconds(120));
     }
 
     private void RunEventInvariant(string eventName)
     {
-        // At very low HP, apply each still-offered option on a fresh run; none may kill the player —
-        // a self-damage option that would be lethal must have been filtered out.
         int[] indices = WithFreshEvent(eventName, hp: 3, host =>
             host.ListOptions().Where(o => o.Kind == OptionKind.ChooseEventOption)
                 .Select(o => o.EventOptionIndex!.Value).ToArray());
@@ -112,29 +109,32 @@ public sealed class DefeatTests
                 {
                     return 0;
                 }
+                bool lethal = host.GetState().Event!.Options.Single(o => o.Index == idx).WillKillPlayer;
                 host.Apply(opt);
                 GameState s = host.GetState();
                 _out.WriteLine($"{eventName} opt {idx}: hp={s.Players[0].CurrentHp} gameOver={s.IsGameOver}");
-                Assert.False(s.IsGameOver, $"{eventName} option {idx} killed the player from 3 HP");
-                Assert.True(s.Players[0].CurrentHp > 0, $"{eventName} option {idx} dropped HP to {s.Players[0].CurrentHp}");
+                Assert.Equal(lethal, s.IsGameOver);
+                if (lethal)
+                {
+                    Assert.Equal(0, s.Players[0].CurrentHp);
+                    Assert.False(s.IsVictory);
+                    Assert.Empty(host.ListOptions());
+                }
                 return 0;
             });
         }
     }
 
     [Fact]
-    public async Task Event_OffersTheDamagingOption_WhenHpIsHighEnough()
+    public async Task Event_HpChangesWarning_WithoutHidingChoices()
     {
-        // Sanity that the gate is dynamic, not a blanket hide: DollRoom offers more choices at full HP
-        // (both HP-cost options) than at 3 HP (where the lethal ones are filtered).
         await Task.Run(() =>
         {
-            int atFull = WithFreshEvent("DollRoom", hp: 80,
-                host => host.ListOptions().Count(o => o.Kind == OptionKind.ChooseEventOption));
-            int atLow = WithFreshEvent("DollRoom", hp: 3,
-                host => host.ListOptions().Count(o => o.Kind == OptionKind.ChooseEventOption));
-            _out.WriteLine($"DollRoom options: full={atFull} low={atLow}");
-            Assert.True(atFull > atLow, $"expected more options at full HP ({atFull}) than at 3 HP ({atLow})");
+            var atFull = WithFreshEvent("DollRoom", hp: 80, host => host.GetState().Event!.Options);
+            var atLow = WithFreshEvent("DollRoom", hp: 3, host => host.GetState().Event!.Options);
+            Assert.Equal(atFull.Select(o => o.TextKey), atLow.Select(o => o.TextKey));
+            Assert.DoesNotContain(atFull, o => o.WillKillPlayer);
+            Assert.Contains(atLow, o => o.WillKillPlayer);
         }).WaitAsync(TimeSpan.FromSeconds(60));
     }
 
