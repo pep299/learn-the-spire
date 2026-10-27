@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Reflection;
 using Lts2.Harness;
 using MegaCrit.Sts2.Core.Models;
 using Xunit;
@@ -99,10 +100,22 @@ public sealed class AncientChildChoiceTests
         Assert.Equal(count, choice.MinSelect);
         Assert.Equal(count, choice.MaxSelect);
         var indices = Enumerable.Range(0, choice.Options.Count).Reverse().Take(count).ToArray();
-        int upgradesBefore = host.Run.Players[0].Deck.Cards.Sum(c => c.CurrentUpgradeLevel);
+        var selector = typeof(GameHost).GetProperty("Selector",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(host)!;
+        var pending = (PendingChoice)selector.GetType().GetProperty("Pending")!.GetValue(selector)!;
+        var selected = indices.Select(index => pending.Options[index]).ToArray();
+        var before = host.Run.Players[0].Deck.Cards.Select(card => (Card: card, Level: card.CurrentUpgradeLevel)).ToArray();
         host.ApplyCardChoice(indices);
         Assert.Equal(GamePhase.Map, host.GetState().Phase);
-        Assert.Equal(upgradesBefore + count, host.Run.Players[0].Deck.Cards.Sum(c => c.CurrentUpgradeLevel));
+        var after = host.Run.Players[0].Deck.Cards;
+        Assert.Equal(before.Length, after.Count);
+        for (int index = 0; index < before.Length; index++)
+        {
+            var (card, level) = before[index];
+            Assert.Same(card, after[index]);
+            bool wasSelected = selected.Any(chosen => ReferenceEquals(chosen, card));
+            Assert.Equal(level + (wasSelected ? 1 : 0), card.CurrentUpgradeLevel);
+        }
         Assert.Empty(errors.Errors);
     }
 

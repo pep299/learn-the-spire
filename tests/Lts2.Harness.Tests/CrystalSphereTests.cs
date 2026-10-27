@@ -1,5 +1,9 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent;
+using MegaCrit.Sts2.Core.Events.Custom.CrystalSphereEvent.CrystalSphereItems;
+using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Models;
 using Lts2.Harness;
 using Xunit;
@@ -48,32 +52,48 @@ public sealed class CrystalSphereTests
         Assert.Equal(big.Width * big.Height, big.HiddenCells.Count + big.RevealedCells.Count);
     }
 
-    [Fact]
-    public void PlayingTheMinigameOut_GrantsRewardsForRevealedItems_AndReturnsToTheMap()
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(true, 30)]
+    public void BigGold_PaysExactlyThirtyOnlyWhenFullyUncovered_AndReturnsToTheMap(bool complete, int expectedGold)
     {
+        using var errors = new LogErrorSink();
         GameHost host = TestNav.StartOnMap("TESTSEED");
-        int relicsBefore = host.GetState().Players[0].Relics.Count;
-        int deckBefore = host.GetState().Players[0].Deck.Count;
         EnterMinigameViaPaymentPlan(host);
+        int goldBefore = host.Run.Players[0].Gold;
+        var board = (CrystalSphereMinigame)typeof(GameHost).GetProperty("PendingCrystalSphere",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(host)!;
+        // 固定操作を作るfixtureだけが配置を参照する。クリックは公開候補を通す。
+        var gold = board.Items.OfType<CrystalSphereGold>().First(item => item.Size.X == 2);
+        host.Apply(host.ListOptions().Single(o =>
+            o.Kind == OptionKind.SetCrystalSphereTool && o.CrystalSphereTool == "Small"));
+        ClickCell(host, new Coord(gold.Position.X, gold.Position.Y));
+        Assert.Equal(goldBefore, host.Run.Players[0].Gold);
+        if (complete) ClickCell(host, new Coord(gold.Position.X + 1, gold.Position.Y));
 
-        // Greedily spend every divination uncovering items, then take the rewards the revealed items
-        // pay out (which surface through the normal custom-reward screen) until back on the map.
+        int remaining = host.GetState().CrystalSphere!.DivinationsLeft;
+        for (int step = 0; step < remaining; step++)
+        {
+            Coord empty = host.GetState().CrystalSphere!.HiddenCells
+                .First(cell => board.cells[cell.Col, cell.Row].Item is null);
+            ClickCell(host, empty);
+        }
+        if (complete)
+        {
+            Assert.Equal(GamePhase.Reward, host.GetState().Phase);
+            var reward = Assert.Single(host.GetState().Rewards!.Rewards);
+            Assert.Equal(RewardType.Gold, reward.Type);
+            Assert.Equal(expectedGold, reward.Gold);
+        }
         GameState end = AutoPlayer.Advance(
             host,
             stop: s => s.Phase == GamePhase.Map || s.Phase == GamePhase.GameOver,
-            maxSteps: 200,
+            maxSteps: 20,
             log: _out);
-
-        PlayerState player = end.Players[0];
-        _out.WriteLine($"ended phase={end.Phase} gold={player.Gold} relics={player.Relics.Count} deck={player.Deck.Count}");
-
         Assert.Equal(GamePhase.Map, end.Phase);
         Assert.Null(end.CrystalSphere);
-        // PaymentPlan adds a curse to the deck, so the deck must have grown (plus any card the greedy
-        // play uncovered and took) — evidence the minigame resolved and paid out through to the map.
-        Assert.True(player.Deck.Count > deckBefore,
-            $"expected the deck to grow (curse + any revealed card) but it went {deckBefore} -> {player.Deck.Count}");
-        Assert.True(player.Relics.Count >= relicsBefore, "relic count should not regress through the minigame");
+        Assert.Equal(goldBefore + expectedGold, end.Players[0].Gold);
+        Assert.Empty(errors.Errors);
     }
 
     [Fact]
