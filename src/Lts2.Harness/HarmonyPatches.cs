@@ -86,6 +86,11 @@ internal static class HarmonyPatches
                 AccessTools.PropertyGetter(typeof(MegaCrit.Sts2.Core.Models.CardModel), "SelectionScreenPrompt"),
                 finalizer: new HarmonyMethod(typeof(HarmonyPatches), nameof(SelectionScreenPromptFinalizer)));
 
+            // Powerのターン開始時選択も、翻訳欠落で選択器へ到達する前に失敗する。
+            harmony.Patch(
+                AccessTools.PropertyGetter(typeof(PowerModel), "SelectionScreenPrompt"),
+                finalizer: new HarmonyMethod(typeof(HarmonyPatches), nameof(PowerSelectionScreenPromptFinalizer)));
+
             // The Crystal Sphere minigame's screen instantiates a UI scene (null headless) and pushes
             // it onto the overlay stack. Skip it and hand the live minigame to the harness, which
             // surfaces it as GamePhase.CrystalSphere and drives the cell-clicks the UI normally would.
@@ -496,6 +501,20 @@ internal static class HarmonyPatches
             __result = new LocString("cards", __instance.Id.Entry + ".selectionScreenPrompt");
         }
         return null;
+    }
+
+    private static Exception? PowerSelectionScreenPromptFinalizer(
+        Exception? __exception, PowerModel __instance, ref LocString __result)
+    {
+        if (__exception is InvalidOperationException
+            && __exception.Message == $"No selection screen prompt for {__instance.Id}.")
+        {
+            __result = new LocString("powers", __instance.Id.Entry + ".selectionScreenPrompt");
+            __instance.DynamicVars.AddTo(__result);
+            __result.Add("Amount", __instance.Amount);
+            return null;
+        }
+        return __exception;
     }
 
     // Skip the Crystal Sphere UI screen entirely (it would instantiate a null scene and NRE), routing
