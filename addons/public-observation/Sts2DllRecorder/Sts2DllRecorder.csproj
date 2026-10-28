@@ -4,5 +4,7 @@
     <ProjectReference Include="../../../src/Lts2.Harness/Lts2.Harness.csproj" />
     <Compile Include="../shared/PublicData.cs" Link="PublicData.cs" />
     <Compile Include="../shared/CardProjection.cs" Link="CardProjection.cs" />
+    <Compile Include="../shared/CombatProjection.cs" Link="CombatProjection.cs" />
+    <Compile Include="../shared/KnownDrawTop.cs" Link="KnownDrawTop.cs" />
   </ItemGroup>
 </Project>

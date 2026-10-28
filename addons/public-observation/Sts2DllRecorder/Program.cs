@@ -122,6 +122,7 @@ public sealed class DllRecorder:IDisposable
     private readonly string privateReplayPrefix;
     private readonly string session="dll-"+DateTimeOffset.UtcNow.ToString("yyyyMMddTHHmmssfffZ");
     private readonly CardProjection cards=new();
+    private readonly CombatProjection combatProjection;
     private readonly Dictionary<string,object> offerHistory=new(StringComparer.Ordinal);
     private string? root;
     private long eventSequence,actionSequence,decisionId;
@@ -133,6 +134,8 @@ public sealed class DllRecorder:IDisposable
     private static object[] Items(object? value)=>PublicData.Items(value);
     public DllRecorder(string path)
     {
+        KnownDrawTop.EnsureApplied();
+        combatProjection=new(cards);
         privateReplayPrefix=Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path))!,Path.GetFileNameWithoutExtension(path));
         writer=new StreamWriter(new FileStream(path,FileMode.CreateNew,FileAccess.Write,FileShare.Read),new UTF8Encoding(false)){AutoFlush=true};
         var game=typeof(GameHost).GetProperty("Run")!.PropertyType.Assembly;
@@ -195,12 +198,7 @@ public sealed class DllRecorder:IDisposable
             ? (object)new{state=cards.Read(card,false),rendered=(object?)null}
             : Card(card)).ToArray()};
     }
-    private object Power(object power)=>new{id=PublicData.Id(power),amount=R(power,"DisplayAmount"),title=PublicData.Title(power),
-        rules=PublicData.Localization(R(power,"Description")),dynamicVars=PublicData.DynamicVars(power),
-        facing=power.GetType().Name=="SurroundedPower"?R(power,"Facing").ToString():null,
-        applierCombatId=power.GetType().Name=="FlankingPower"?P(P(power,"Applier"),"CombatId"):null,
-        targetCombatId=power.GetType().Name=="SandpitPower"?P(P(power,"Target"),"CombatId"):null};
-    private object[] Powers(object creature)=>Items(R(creature,"Powers")).Where(p=>(bool)R(p,"IsVisible")).Select(Power).ToArray();
+    private object[] Powers(object creature)=>Items(R(creature,"Powers")).Where(p=>(bool)R(p,"IsVisible")).Select(PublicData.Power).ToArray();
     private static bool IsType(object value,string name){for(Type? t=value.GetType();t!=null;t=t.BaseType)if(t.Name==name)return true;return false;}
     private object[] Enemies(object combat)
         =>Items(R(combat,"Enemies")).Select(enemy=>(object)new{id=R(enemy,"CombatId"),modelId=R(enemy,"ModelId").ToString(),name=R(enemy,"Name").ToString(),
@@ -215,7 +213,10 @@ public sealed class DllRecorder:IDisposable
         var combat=P(Host,"Combat");var pc=P(player,"PlayerCombatState");
         if(combat==null||pc==null||Host!.GetState().Phase is not (GamePhase.Combat or GamePhase.Choice))return null;
         var queue=R(pc,"OrbQueue");
-        return new{turn=R(pc,"TurnNumber"),phase=R(pc,"Phase").ToString(),maxEnergy=R(pc,"MaxEnergy"),stars=R(pc,"Stars"),
+        return new{ownerId=R(R(player,"Creature"),"CombatId"),round=R(combat,"RoundNumber"),side=R(combat,"CurrentSide").ToString(),turn=R(pc,"TurnNumber"),phase=R(pc,"Phase").ToString(),maxEnergy=R(pc,"MaxEnergy"),stars=R(pc,"Stars"),
+            history=combatProjection.Read(MegaCrit.Sts2.Core.Combat.CombatManager.Instance.History,(MegaCrit.Sts2.Core.Combat.CombatState)combat,(MegaCrit.Sts2.Core.Entities.Players.Player)player),
+            boundCardPlayedThisTurn=CombatProjection.BoundUsed(((MegaCrit.Sts2.Core.Entities.Players.Player)player).Creature),
+            drawKnownTop=combatProjection.DrawKnownTop((MegaCrit.Sts2.Core.Entities.Players.Player)player),
             hand=Pile(pc,"Hand"),draw=Pile(pc,"DrawPile",true),discard=Pile(pc,"DiscardPile"),exhaust=Pile(pc,"ExhaustPile"),play=Pile(pc,"PlayPile"),
             orbCapacity=R(queue,"Capacity"),orbs=Items(R(queue,"Orbs")).Select(o=>new{id=PublicData.Id(o),title=PublicData.Title(o),passive=R(o,"PassiveVal"),evoke=R(o,"EvokeVal"),rules=PublicData.Localization(R(o,"Description"))}).ToArray(),
             pets=Items(R(pc,"Pets")).Select(p=>new{id=R(p,"CombatId"),modelId=R(p,"ModelId").ToString(),name=R(p,"Name").ToString(),hp=R(p,"CurrentHp"),maxHp=R(p,"MaxHp"),block=R(p,"Block"),powers=Powers(p)}).ToArray(),
@@ -269,12 +270,12 @@ public sealed class DllRecorder:IDisposable
         var status=new{act=run.CurrentActIndex+1,floor=run.TotalFloor,hp=R(creature,"CurrentHp"),maxHp=R(creature,"MaxHp"),block=R(creature,"Block"),powers=Powers(creature),
             gold=R(player,"Gold"),energy=active?R(pc!,"Energy"):0,maxEnergy=R(player,"MaxEnergy"),character=PublicData.Id(R(player,"Character")),ascension=run.AscensionLevel,
             actFloor=R(run,"ActFloor"),potions=Items(R(player,"Potions")).Select(PublicData.Id).ToArray(),relics=Items(R(player,"Relics")).Select(PublicData.Id).ToArray(),
-            potionBelt=PublicData.Slots(player),relicDetails=Items(R(player,"Relics")).Select(PublicData.Relic).ToArray(),
+            potionBelt=PublicData.Slots(player),relicDetails=Items(R(player,"Relics")).Select(r=>PublicData.Relic(r,active?cards.Reference:null)).ToArray(),
             deckCards=Items(R(R(player,"Deck"),"Cards")).Select((c,index)=>new{index,cardDetails=Card(c)}).ToArray(),
             deck=Items(R(R(player,"Deck"),"Cards")).Select(c=>PublicData.Id(c)+((int)R(c,"CurrentUpgradeLevel")>0?"+"+R(c,"CurrentUpgradeLevel"):"")).OrderBy(x=>x,StringComparer.Ordinal).ToArray(),
             map=PublicData.Map(run),combat,
             room=new{type=P(run,"CurrentRoom")?.GetType().Name,id=P(P(run,"CurrentRoom"),"ModelId")?.ToString()}};
-        var selection=pending==null?null:new{min=R(pending,"MinSelect"),max=R(pending,"MaxSelect"),isUpgradeSelection=R(pending,"IsUpgradeSelection"),
+        var selection=pending==null?null:new{min=R(pending,"MinSelect"),max=R(pending,"MaxSelect"),isUpgradeSelection=R(pending,"IsUpgradeSelection"),context=P(pending,"Context"),
             cards=Items(R(pending,"Options")).Select((card,index)=>new{index,cardDetails=Card(card)}).ToArray(),selected=(object?)null,selectedCount=(int?)null};
         var bundles=P(host,"PendingBundles") is {} pendingBundles?Items(pendingBundles).Select(bundle=>Items(bundle).Select(Card).ToArray()).ToArray():null;
         var state=new{phase=Phase(view.Phase),status,turn=active?R(pc!,"TurnNumber"):null,hand,enemies=active?Enemies(rawCombat!):Array.Empty<object>(),offers,
@@ -285,7 +286,7 @@ public sealed class DllRecorder:IDisposable
             terminal=view.IsGameOver?(view.IsVictory?"victory":"death"):null};
         return new{state,actions,publicHistory=new{coverage="current_recorded_segment_only",shopOffers=offerHistory.Values.ToArray()},
             resolution=new{engineActionsInProgress=(int?)null,evidence="host_apply_returned_or_initial_boundary",pendingChoice=view.Phase==GamePhase.Choice,pendingEffect=PendingEffect},
-            capabilities=new{backend="learn_dll",gameVersion="v0.111.0",actGeneration,presentationActions=false,renderedCardText=false,intentIcons=false,
+            capabilities=new{backend="learn_dll",gameVersion="v0.111.0",observationRevision="public-state-v4",actGeneration,presentationActions=false,renderedCardText=false,intentIcons=false,
                 supportedCharacters=new[]{"IRONCLAD"},supportedAscensions=new[]{0},explicitMultiCardIndices=true,drawPileIdentities=false,
                 localization="keys_or_template_fallback",unavailable=new Dictionary<string,string>()}};
     }

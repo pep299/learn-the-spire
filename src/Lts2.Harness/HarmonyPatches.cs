@@ -50,6 +50,7 @@ internal static class HarmonyPatches
             }
 
             var harmony = new Harmony("sts2.harness.localization");
+            SelectionCapture.Apply(harmony);
 
             harmony.Patch(
                 AccessTools.Method(typeof(MegaCrit.Sts2.Core.Multiplayer.Game.EventSynchronizer), "ResumeEvents"),

@@ -31,6 +31,7 @@ public sealed class PendingChoice
     /// shown as the upgraded card they would become rather than their current form.
     /// </summary>
     public bool IsUpgradeSelection { get; internal set; }
+    public CardSelectionContext? Context { get; }
 
     internal TaskCompletionSource<IReadOnlyList<CardModel>> Completion { get; } =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -40,6 +41,7 @@ public sealed class PendingChoice
         Options = options;
         MinSelect = minSelect;
         MaxSelect = maxSelect;
+        Context=SelectionCapture.Current;
     }
 }
 
@@ -80,6 +82,7 @@ internal sealed class HarnessCardSelector : ICardSelector
     public Task<IEnumerable<CardModel>> GetSelectedCards(IEnumerable<CardModel> options, int minSelect, int maxSelect)
     {
         var list = options.ToList();
+        if(SelectionCapture.Current?.CanSkip==false&&list.Count>0&&maxSelect>0)minSelect=Math.Max(1,minSelect);
         var choice = new PendingChoice(list, minSelect, maxSelect);
         lock (_gate)
         {
