@@ -134,6 +134,7 @@ public sealed class DllRecorder:IDisposable
     private static object[] Items(object? value)=>PublicData.Items(value);
     public DllRecorder(string path)
     {
+        KnownDrawTop.EnsureApplied();
         combatProjection=new(cards);
         privateReplayPrefix=Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path))!,Path.GetFileNameWithoutExtension(path));
         writer=new StreamWriter(new FileStream(path,FileMode.CreateNew,FileAccess.Write,FileShare.Read),new UTF8Encoding(false)){AutoFlush=true};

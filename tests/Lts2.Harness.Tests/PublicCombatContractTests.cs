@@ -17,6 +17,7 @@ namespace Lts2.Harness.Tests;
 
 public sealed class PublicCombatContractTests
 {
+    static PublicCombatContractTests()=>KnownDrawTop.EnsureApplied();
     private static JsonElement Json(object value)=>JsonSerializer.SerializeToElement(value);
     private static PendingChoice Pending(GameHost host)=>(PendingChoice)PublicData.Required(
         PublicData.Required(host,"Selector"),"Pending");
